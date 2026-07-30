@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../prisma";
 import { ALLOWED_IMAGE_MIME_TYPES, imageUpload } from "../lib/imageUpload";
+import { postInclude } from "../lib/postQueries";
 import { r2Configured, uploadToR2 } from "../lib/r2";
 import { postAuthorSelect, toPublicComment, toPublicPost } from "../lib/serializers";
 import {
@@ -11,14 +12,6 @@ import {
 } from "../validation/posts";
 
 export const postsRouter = Router();
-
-function postInclude(viewerUserId: string) {
-  return {
-    author: { select: postAuthorSelect },
-    _count: { select: { likes: true, comments: true } },
-    likes: { where: { userId: viewerUserId }, select: { userId: true } },
-  } as const;
-}
 
 postsRouter.post("/", requireAuth, (req, res) => {
   if (!r2Configured) {

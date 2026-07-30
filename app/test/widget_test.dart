@@ -71,7 +71,10 @@ void main() {
     await tester.tap(find.widgetWithText(NavigationDestination, 'Feed'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Post feed will appear here (Phase 3)'), findsOneWidget);
+    // The test harness has no real network, so the feed lands on its error
+    // state rather than showing real posts - this still proves navigation
+    // to the Feed tab worked.
+    expect(find.text('Retry'), findsOneWidget);
   });
 
   testWidgets('Profile tab shows the user and toggles the edit form', (

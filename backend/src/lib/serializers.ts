@@ -12,6 +12,18 @@ export function toPublicUser(user: User) {
   };
 }
 
+/** Same as {@link toPublicUser} but omits email, for viewing other users. */
+export function toPublicProfile(user: User) {
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    bio: user.bio,
+    avatarUrl: user.avatarUrl,
+    createdAt: user.createdAt,
+  };
+}
+
 export const postAuthorSelect = {
   id: true,
   username: true,
