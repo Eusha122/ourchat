@@ -42,6 +42,44 @@ class UsersApi {
     });
   }
 
+  Future<List<PostAuthor>> search(String query) async {
+    return _handle(() async {
+      final response = await _dio.get(
+        '/users/search',
+        queryParameters: {'q': query},
+      );
+      final data = response.data as Map<String, dynamic>;
+      return (data['users'] as List)
+          .map((e) => PostAuthor.fromJson(e as Map<String, dynamic>))
+          .toList();
+    });
+  }
+
+  Future<PublicProfile> fetchProfile(String username) async {
+    return _handle(() async {
+      final response = await _dio.get('/users/$username');
+      final data = response.data as Map<String, dynamic>;
+      return PublicProfile.fromJson(data['user'] as Map<String, dynamic>);
+    });
+  }
+
+  Future<FeedPage> fetchUserPosts(
+    String username, {
+    String? cursor,
+    int take = 20,
+  }) async {
+    return _handle(() async {
+      final response = await _dio.get(
+        '/users/$username/posts',
+        queryParameters: {
+          if (cursor != null) 'cursor': cursor,
+          'take': take,
+        },
+      );
+      return FeedPage.fromJson(response.data as Map<String, dynamic>);
+    });
+  }
+
   Future<T> _handle<T>(Future<T> Function() action) async {
     try {
       return await action();
