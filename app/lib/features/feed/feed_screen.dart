@@ -184,6 +184,8 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
             post: post,
             onToggleLike: () => _toggleLike(post),
             onOpen: () => context.push('/feed/${post.id}'),
+            onOpenAuthor: () =>
+                context.push('/search/${post.author.username}'),
           );
         },
       ),

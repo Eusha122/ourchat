@@ -9,11 +9,13 @@ class PostCard extends StatelessWidget {
     required this.post,
     required this.onToggleLike,
     required this.onOpen,
+    required this.onOpenAuthor,
   });
 
   final Post post;
   final VoidCallback onToggleLike;
   final VoidCallback onOpen;
+  final VoidCallback onOpenAuthor;
 
   @override
   Widget build(BuildContext context) {
@@ -23,6 +25,7 @@ class PostCard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         ListTile(
+          onTap: onOpenAuthor,
           leading: CircleAvatar(
             backgroundImage: author.avatarUrl != null
                 ? CachedNetworkImageProvider(author.avatarUrl!)
