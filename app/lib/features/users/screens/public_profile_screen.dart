@@ -116,32 +116,47 @@ class _PublicProfileScreenState extends ConsumerState<PublicProfileScreen> {
 
     final profile = _profile!;
 
-    return GridView.builder(
+    return CustomScrollView(
       controller: _scrollController,
-      padding: const EdgeInsets.only(top: 0),
-      itemCount: _posts.length + 1 + (_isLoadingMore ? 1 : 0),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 2,
-        mainAxisSpacing: 2,
-      ),
-      itemBuilder: (context, index) {
-        if (index == 0) {
-          return _ProfileHeader(profile: profile, postCount: _posts.length);
-        }
-        final postIndex = index - 1;
-        if (postIndex >= _posts.length) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final post = _posts[postIndex];
-        return GestureDetector(
-          onTap: () => context.push('/search/${widget.username}/${post.id}'),
-          child: CachedNetworkImage(
-            imageUrl: post.imageUrl,
-            fit: BoxFit.cover,
+      slivers: [
+        SliverToBoxAdapter(child: _ProfileHeader(profile: profile, postCount: _posts.length)),
+        if (_posts.isEmpty)
+          const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.only(top: 48),
+              child: Center(child: Text('No posts yet')),
+            ),
+          )
+        else
+          SliverGrid(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              crossAxisSpacing: 2,
+              mainAxisSpacing: 2,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final post = _posts[index];
+                return GestureDetector(
+                  onTap: () =>
+                      context.push('/search/${widget.username}/${post.id}'),
+                  child: CachedNetworkImage(
+                    imageUrl: post.imageUrl,
+                    fit: BoxFit.cover,
+                  ),
+                );
+              },
+              childCount: _posts.length,
+            ),
           ),
-        );
-      },
+        if (_isLoadingMore)
+          const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -154,12 +169,31 @@ class _ProfileHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GridTile(
-      child: Container(),
-    ).._unused(); // placeholder to satisfy GridView item typing below
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          CircleAvatar(
+            radius: 48,
+            backgroundImage: profile.avatarUrl != null
+                ? CachedNetworkImageProvider(profile.avatarUrl!)
+                : null,
+            child: profile.avatarUrl == null
+                ? const Icon(Icons.person, size: 48)
+                : null,
+          ),
+          const SizedBox(height: 16),
+          Text('@${profile.username}', style: Theme.of(context).textTheme.titleLarge),
+          if (profile.displayName != null && profile.displayName!.isNotEmpty)
+            Text(profile.displayName!),
+          if (profile.bio != null && profile.bio!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(profile.bio!, textAlign: TextAlign.center),
+          ],
+          const SizedBox(height: 12),
+          Text('$postCount posts'),
+        ],
+      ),
+    );
   }
-}
-
-extension on Widget {
-  void _unused() {}
 }

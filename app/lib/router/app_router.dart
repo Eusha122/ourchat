@@ -12,6 +12,7 @@ import '../features/posts/screens/upload_post_screen.dart';
 import '../features/profile/profile_screen.dart';
 import '../features/search/search_screen.dart';
 import '../features/splash/splash_screen.dart';
+import '../features/users/screens/public_profile_screen.dart';
 import '../shell/app_shell.dart';
 
 /// Bridges Riverpod's [authControllerProvider] to go_router's
@@ -96,6 +97,22 @@ final goRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/search',
                 builder: (context, state) => const SearchScreen(),
+                routes: [
+                  GoRoute(
+                    path: ':username',
+                    builder: (context, state) => PublicProfileScreen(
+                      username: state.pathParameters['username']!,
+                    ),
+                    routes: [
+                      GoRoute(
+                        path: ':postId',
+                        builder: (context, state) => PostDetailScreen(
+                          postId: state.pathParameters['postId']!,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ],
           ),
