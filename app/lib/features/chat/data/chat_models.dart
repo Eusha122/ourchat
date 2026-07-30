@@ -51,7 +51,10 @@ class Conversation {
       lastMessage: json['lastMessage'] != null
           ? LastMessage.fromJson(json['lastMessage'] as Map<String, dynamic>)
           : null,
-      unreadCount: json['unreadCount'] as int,
+      // POST /conversations (start/lookup) only returns id + otherParticipant;
+      // unreadCount/lastMessage are absent there and only populated by the
+      // GET /conversations list endpoint.
+      unreadCount: json['unreadCount'] as int? ?? 0,
     );
   }
 

@@ -10,7 +10,10 @@
       "Read(//c/Users/user/AppData/Local/Pub/Cache/hosted/pub.dev/riverpod-3.4.2/lib/**)",
       "Bash(npx prisma *)",
       "Read(//c/Users/user/AppData/Local/Pub/Cache/hosted/pub.dev/receive_sharing_intent-1.9.0/**)",
-      "Read(//c/Users/user/AppData/Local/Pub/Cache/hosted/pub.dev/receive_sharing_intent-1.9.0/lib/src/**)"
+      "Read(//c/Users/user/AppData/Local/Pub/Cache/hosted/pub.dev/receive_sharing_intent-1.9.0/lib/src/**)",
+      "Read(//c/Users/user/AppData/Local/Temp/**)",
+      "Bash(taskkill //IM ourchat.exe //F)",
+      "Bash(tasklist //FI \"IMAGENAME eq dart.exe\")"
     ]
   }
 }
