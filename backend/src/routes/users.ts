@@ -1,30 +1,12 @@
 import { Router } from "express";
-import multer from "multer";
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../prisma";
+import { ALLOWED_IMAGE_MIME_TYPES, imageUpload } from "../lib/imageUpload";
 import { r2Configured, uploadToR2 } from "../lib/r2";
 import { toPublicUser } from "../lib/serializers";
 import { updateProfileSchema } from "../validation/users";
 
 export const usersRouter = Router();
-
-const ALLOWED_MIME_TYPES: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-};
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    if (!ALLOWED_MIME_TYPES[file.mimetype]) {
-      cb(new Error("Only JPEG, PNG, or WebP images are allowed"));
-      return;
-    }
-    cb(null, true);
-  },
-});
 
 usersRouter.patch("/me", requireAuth, async (req, res) => {
   const parsed = updateProfileSchema.safeParse(req.body);
@@ -47,7 +29,7 @@ usersRouter.post("/me/avatar", requireAuth, (req, res) => {
     return;
   }
 
-  upload.single("avatar")(req, res, async (err) => {
+  imageUpload.single("avatar")(req, res, async (err) => {
     if (err) {
       res.status(400).json({ error: err.message });
       return;
@@ -57,7 +39,7 @@ usersRouter.post("/me/avatar", requireAuth, (req, res) => {
       return;
     }
 
-    const extension = ALLOWED_MIME_TYPES[req.file.mimetype];
+    const extension = ALLOWED_IMAGE_MIME_TYPES[req.file.mimetype];
     const avatarUrl = await uploadToR2({
       buffer: req.file.buffer,
       contentType: req.file.mimetype,
