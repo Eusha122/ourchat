@@ -109,4 +109,24 @@ void main() {
 
     expect(find.byType(TextField), findsNothing);
   });
+
+  testWidgets('Search tab prompts for a query before searching', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _appWith(
+        AuthState.authenticated(
+          user: _testUser,
+          accessToken: 'access',
+          refreshToken: 'refresh',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(NavigationDestination, 'Search'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Search for people by username'), findsOneWidget);
+  });
 }
