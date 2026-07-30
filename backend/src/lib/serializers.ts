@@ -17,7 +17,7 @@ export const postAuthorSelect = {
   username: true,
   displayName: true,
   avatarUrl: true,
-} satisfies Prisma.UserSelect;
+} as const satisfies Prisma.UserSelect;
 
 type PostWithRelations = Prisma.PostGetPayload<{
   include: {

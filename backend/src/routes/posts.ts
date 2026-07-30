@@ -88,8 +88,9 @@ postsRouter.get("/", requireAuth, async (req, res) => {
 });
 
 postsRouter.get("/:postId", requireAuth, async (req, res) => {
+  const postId = req.params.postId as string;
   const post = await prisma.post.findUnique({
-    where: { id: req.params.postId },
+    where: { id: postId },
     include: postInclude(req.userId!),
   });
   if (!post) {
@@ -100,8 +101,9 @@ postsRouter.get("/:postId", requireAuth, async (req, res) => {
 });
 
 postsRouter.post("/:postId/like", requireAuth, async (req, res) => {
+  const postId = req.params.postId as string;
   const postExists = await prisma.post.findUnique({
-    where: { id: req.params.postId },
+    where: { id: postId },
     select: { id: true },
   });
   if (!postExists) {
@@ -111,30 +113,28 @@ postsRouter.post("/:postId/like", requireAuth, async (req, res) => {
 
   await prisma.postLike.upsert({
     where: {
-      postId_userId: { postId: req.params.postId, userId: req.userId! },
+      postId_userId: { postId, userId: req.userId! },
     },
-    create: { postId: req.params.postId, userId: req.userId! },
+    create: { postId, userId: req.userId! },
     update: {},
   });
 
-  const likeCount = await prisma.postLike.count({
-    where: { postId: req.params.postId },
-  });
+  const likeCount = await prisma.postLike.count({ where: { postId } });
   res.json({ likeCount, likedByMe: true });
 });
 
 postsRouter.delete("/:postId/like", requireAuth, async (req, res) => {
+  const postId = req.params.postId as string;
   await prisma.postLike.deleteMany({
-    where: { postId: req.params.postId, userId: req.userId! },
+    where: { postId, userId: req.userId! },
   });
 
-  const likeCount = await prisma.postLike.count({
-    where: { postId: req.params.postId },
-  });
+  const likeCount = await prisma.postLike.count({ where: { postId } });
   res.json({ likeCount, likedByMe: false });
 });
 
 postsRouter.get("/:postId/comments", requireAuth, async (req, res) => {
+  const postId = req.params.postId as string;
   const parsed = feedQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
@@ -145,7 +145,7 @@ postsRouter.get("/:postId/comments", requireAuth, async (req, res) => {
   const { cursor } = parsed.data;
 
   const comments = await prisma.comment.findMany({
-    where: { postId: req.params.postId },
+    where: { postId },
     take: take + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -160,8 +160,9 @@ postsRouter.get("/:postId/comments", requireAuth, async (req, res) => {
 });
 
 postsRouter.post("/:postId/comments", requireAuth, async (req, res) => {
+  const postId = req.params.postId as string;
   const postExists = await prisma.post.findUnique({
-    where: { id: req.params.postId },
+    where: { id: postId },
     select: { id: true },
   });
   if (!postExists) {
@@ -177,7 +178,7 @@ postsRouter.post("/:postId/comments", requireAuth, async (req, res) => {
 
   const comment = await prisma.comment.create({
     data: {
-      postId: req.params.postId,
+      postId,
       authorId: req.userId!,
       text: parsed.data.text,
     },
