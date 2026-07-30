@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/token_storage.dart';
 import '../data/auth_api.dart';
+import '../data/auth_models.dart';
 import 'auth_state.dart';
 
 final tokenStorageProvider = Provider<TokenStorage>((ref) => TokenStorage());
@@ -105,6 +106,20 @@ class AuthController extends AsyncNotifier<AuthState> {
   Future<void> logout() async {
     await ref.read(tokenStorageProvider).clear();
     state = const AsyncData(AuthState.unauthenticated());
+  }
+
+  /// Patches the cached user (e.g. after a profile/avatar update) without
+  /// re-authenticating.
+  void updateUser(PublicUser user) {
+    final current = state.value;
+    if (current == null || !current.isAuthenticated) return;
+    state = AsyncData(
+      AuthState.authenticated(
+        user: user,
+        accessToken: current.accessToken!,
+        refreshToken: current.refreshToken!,
+      ),
+    );
   }
 }
 
