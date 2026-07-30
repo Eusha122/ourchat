@@ -73,7 +73,11 @@ export function toPublicMessage(message: MessageWithSender) {
   return {
     id: message.id,
     conversationId: message.conversationId,
+    type: message.type,
     text: message.text,
+    linkUrl: message.linkUrl,
+    linkTitle: message.linkTitle,
+    linkImageUrl: message.linkImageUrl,
     createdAt: message.createdAt,
     sender: message.sender,
   };

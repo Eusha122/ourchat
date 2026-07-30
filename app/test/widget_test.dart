@@ -53,7 +53,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Chat list will appear here (Phase 5)'), findsOneWidget);
+    // The test harness has no real network, so Chats lands on its error
+    // state rather than a real conversation list - this still proves the
+    // app landed on the Chats tab by default.
+    expect(find.widgetWithText(AppBar, 'Chats'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
   });
 
   testWidgets('Bottom nav switches to the Feed tab', (tester) async {
@@ -73,8 +77,11 @@ void main() {
 
     // The test harness has no real network, so the feed lands on its error
     // state rather than showing real posts - this still proves navigation
-    // to the Feed tab worked.
-    expect(find.text('Retry'), findsOneWidget);
+    // to the Feed tab worked. (Chats' own Retry button from the initial tab
+    // stays mounted underneath via IndexedStack, so there may be more than
+    // one on screen.)
+    expect(find.widgetWithText(AppBar, 'Feed'), findsOneWidget);
+    expect(find.text('Retry'), findsWidgets);
   });
 
   testWidgets('Profile tab shows the user and toggles the edit form', (

@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../auth/state/auth_controller.dart';
+import '../../chat/data/conversations_api.dart';
+import '../../chat/state/chat_providers.dart';
 import '../../posts/data/post_models.dart';
 import '../data/public_profile.dart';
 import '../data/users_api.dart';
@@ -161,14 +164,47 @@ class _PublicProfileScreenState extends ConsumerState<PublicProfileScreen> {
   }
 }
 
-class _ProfileHeader extends StatelessWidget {
+class _ProfileHeader extends ConsumerStatefulWidget {
   const _ProfileHeader({required this.profile, required this.postCount});
 
   final PublicProfile profile;
   final int postCount;
 
   @override
+  ConsumerState<_ProfileHeader> createState() => _ProfileHeaderState();
+}
+
+class _ProfileHeaderState extends ConsumerState<_ProfileHeader> {
+  bool _isStartingChat = false;
+
+  Future<void> _messageUser() async {
+    setState(() => _isStartingChat = true);
+    try {
+      final conversation = await ref
+          .read(conversationsApiProvider)
+          .startConversation(widget.profile.username);
+      if (!mounted) return;
+      await context.push(
+        '/chats/${conversation.id}',
+        extra: conversation.otherParticipant,
+      );
+    } on ConversationsApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _isStartingChat = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final profile = widget.profile;
+    final myId = ref.watch(authControllerProvider).value?.user?.id;
+    final isMe = profile.id == myId;
+
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -183,7 +219,10 @@ class _ProfileHeader extends StatelessWidget {
                 : null,
           ),
           const SizedBox(height: 16),
-          Text('@${profile.username}', style: Theme.of(context).textTheme.titleLarge),
+          Text(
+            '@${profile.username}',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
           if (profile.displayName != null && profile.displayName!.isNotEmpty)
             Text(profile.displayName!),
           if (profile.bio != null && profile.bio!.isNotEmpty) ...[
@@ -191,7 +230,21 @@ class _ProfileHeader extends StatelessWidget {
             Text(profile.bio!, textAlign: TextAlign.center),
           ],
           const SizedBox(height: 12),
-          Text('$postCount posts'),
+          Text('${widget.postCount} posts'),
+          if (!isMe) ...[
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: _isStartingChat ? null : _messageUser,
+              icon: _isStartingChat
+                  ? const SizedBox(
+                      height: 16,
+                      width: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.chat_bubble_outline),
+              label: const Text('Message'),
+            ),
+          ],
         ],
       ),
     );

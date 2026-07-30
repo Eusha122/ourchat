@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../prisma";
+import { fetchLinkMetadata } from "../lib/linkMetadata";
 import { postAuthorSelect, toPublicMessage } from "../lib/serializers";
 import { getIO } from "../socket";
 import {
@@ -177,11 +178,23 @@ conversationsRouter.post("/:conversationId/messages", requireAuth, async (req, r
     return;
   }
 
+  let linkTitle: string | null = null;
+  let linkImageUrl: string | null = null;
+  if (parsed.data.type === "LINK") {
+    const metadata = await fetchLinkMetadata(parsed.data.linkUrl!);
+    linkTitle = metadata.title;
+    linkImageUrl = metadata.imageUrl;
+  }
+
   const message = await prisma.message.create({
     data: {
       conversationId,
       senderId: req.userId!,
+      type: parsed.data.type,
       text: parsed.data.text,
+      linkUrl: parsed.data.linkUrl,
+      linkTitle,
+      linkImageUrl,
     },
     include: { sender: { select: postAuthorSelect } },
   });

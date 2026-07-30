@@ -5,8 +5,10 @@ import 'package:go_router/go_router.dart';
 import '../features/auth/screens/login_screen.dart';
 import '../features/auth/screens/register_screen.dart';
 import '../features/auth/state/auth_controller.dart';
+import '../features/chat/screens/conversation_screen.dart';
 import '../features/chats/chats_screen.dart';
 import '../features/feed/feed_screen.dart';
+import '../features/posts/data/post_models.dart';
 import '../features/posts/screens/post_detail_screen.dart';
 import '../features/posts/screens/upload_post_screen.dart';
 import '../features/profile/profile_screen.dart';
@@ -73,6 +75,15 @@ final goRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/chats',
                 builder: (context, state) => const ChatsScreen(),
+                routes: [
+                  GoRoute(
+                    path: ':conversationId',
+                    builder: (context, state) => ConversationScreen(
+                      conversationId: state.pathParameters['conversationId']!,
+                      otherParticipant: state.extra as PostAuthor,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
