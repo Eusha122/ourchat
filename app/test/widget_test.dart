@@ -73,4 +73,37 @@ void main() {
 
     expect(find.text('Post feed will appear here (Phase 3)'), findsOneWidget);
   });
+
+  testWidgets('Profile tab shows the user and toggles the edit form', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _appWith(
+        AuthState.authenticated(
+          user: _testUser,
+          accessToken: 'access',
+          refreshToken: 'refresh',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(NavigationDestination, 'Profile'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('@tester'), findsOneWidget);
+    expect(find.text('Edit profile'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+
+    await tester.tap(find.text('Edit profile'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsNWidgets(2));
+    expect(find.text('Save'), findsOneWidget);
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsNothing);
+  });
 }
