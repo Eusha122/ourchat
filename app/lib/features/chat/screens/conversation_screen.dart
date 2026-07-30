@@ -8,6 +8,7 @@ import '../../posts/data/post_models.dart';
 import '../data/chat_models.dart';
 import '../data/conversations_api.dart';
 import '../state/chat_providers.dart';
+import '../widgets/link_message_card.dart';
 
 class ConversationScreen extends ConsumerStatefulWidget {
   const ConversationScreen({
