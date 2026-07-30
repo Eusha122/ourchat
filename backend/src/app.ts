@@ -4,6 +4,7 @@ import { prisma } from "./prisma";
 import { authRouter } from "./routes/auth";
 import { usersRouter } from "./routes/users";
 import { postsRouter } from "./routes/posts";
+import { conversationsRouter } from "./routes/conversations";
 
 export const app = express();
 
@@ -13,6 +14,7 @@ app.use(express.json());
 app.use("/auth", authRouter);
 app.use("/users", usersRouter);
 app.use("/posts", postsRouter);
+app.use("/conversations", conversationsRouter);
 
 app.get("/health", async (_req, res) => {
   try {

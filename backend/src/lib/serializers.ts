@@ -64,3 +64,17 @@ export function toPublicComment(comment: CommentWithAuthor) {
     author: comment.author,
   };
 }
+
+type MessageWithSender = Prisma.MessageGetPayload<{
+  include: { sender: { select: typeof postAuthorSelect } };
+}>;
+
+export function toPublicMessage(message: MessageWithSender) {
+  return {
+    id: message.id,
+    conversationId: message.conversationId,
+    text: message.text,
+    createdAt: message.createdAt,
+    sender: message.sender,
+  };
+}
