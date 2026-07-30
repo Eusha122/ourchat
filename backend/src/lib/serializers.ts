@@ -1,4 +1,4 @@
-import type { User } from "../generated/prisma/client";
+import type { Comment, Prisma, User } from "../generated/prisma/client";
 
 export function toPublicUser(user: User) {
   return {
@@ -9,5 +9,46 @@ export function toPublicUser(user: User) {
     bio: user.bio,
     avatarUrl: user.avatarUrl,
     createdAt: user.createdAt,
+  };
+}
+
+export const postAuthorSelect = {
+  id: true,
+  username: true,
+  displayName: true,
+  avatarUrl: true,
+} satisfies Prisma.UserSelect;
+
+type PostWithRelations = Prisma.PostGetPayload<{
+  include: {
+    author: { select: typeof postAuthorSelect };
+    _count: { select: { likes: true; comments: true } };
+    likes: { select: { userId: true } };
+  };
+}>;
+
+export function toPublicPost(post: PostWithRelations) {
+  return {
+    id: post.id,
+    imageUrl: post.imageUrl,
+    caption: post.caption,
+    createdAt: post.createdAt,
+    author: post.author,
+    likeCount: post._count.likes,
+    commentCount: post._count.comments,
+    likedByMe: post.likes.length > 0,
+  };
+}
+
+type CommentWithAuthor = Comment & {
+  author: Prisma.UserGetPayload<{ select: typeof postAuthorSelect }>;
+};
+
+export function toPublicComment(comment: CommentWithAuthor) {
+  return {
+    id: comment.id,
+    text: comment.text,
+    createdAt: comment.createdAt,
+    author: comment.author,
   };
 }
