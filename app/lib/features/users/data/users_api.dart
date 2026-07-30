@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 
 import '../../auth/data/auth_models.dart';
+import '../../posts/data/post_models.dart';
+import 'public_profile.dart';
 
 class UsersApiException implements Exception {
   UsersApiException(this.message);
