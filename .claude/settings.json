@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where flutter *)",
+      "Bash(where dart *)",
+      "Bash(where psql *)",
+      "Read(//c/src/flutter/**)",
+      "Read(//c/Users/user/flutter/**)"
+    ]
+  }
+}
