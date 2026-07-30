@@ -1,11 +1,14 @@
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { prisma } from "./prisma";
+import { authRouter } from "./routes/auth";
 
 export const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+app.use("/auth", authRouter);
 
 app.get("/health", async (_req, res) => {
   try {
@@ -14,4 +17,9 @@ app.get("/health", async (_req, res) => {
   } catch (err) {
     res.status(503).json({ status: "error", db: "unreachable" });
   }
+});
+
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  console.error(err);
+  res.status(500).json({ error: "Internal server error" });
 });
