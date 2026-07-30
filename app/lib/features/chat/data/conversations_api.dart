@@ -57,7 +57,18 @@ class ConversationsApi {
     return _handle(() async {
       final response = await _dio.post(
         '/conversations/$conversationId/messages',
-        data: {'text': text},
+        data: {'type': 'TEXT', 'text': text},
+      );
+      final data = response.data as Map<String, dynamic>;
+      return ChatMessage.fromJson(data['message'] as Map<String, dynamic>);
+    });
+  }
+
+  Future<ChatMessage> sendLink(String conversationId, String linkUrl) async {
+    return _handle(() async {
+      final response = await _dio.post(
+        '/conversations/$conversationId/messages',
+        data: {'type': 'LINK', 'linkUrl': linkUrl},
       );
       final data = response.data as Map<String, dynamic>;
       return ChatMessage.fromJson(data['message'] as Map<String, dynamic>);

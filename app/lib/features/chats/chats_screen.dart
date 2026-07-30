@@ -133,7 +133,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
             ),
             subtitle: lastMessage != null
                 ? Text(
-                    lastMessage.text,
+                    lastMessage.preview,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   )

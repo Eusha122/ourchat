@@ -229,6 +229,17 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       itemBuilder: (context, index) {
         final message = _messages[index];
         final isMine = message.sender.id == myId;
+
+        if (message.type == MessageType.link) {
+          return Align(
+            alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: LinkMessageCard(message: message, isMine: isMine),
+            ),
+          );
+        }
+
         return Align(
           alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
           child: Container(
@@ -244,7 +255,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
               borderRadius: BorderRadius.circular(16),
             ),
             child: Text(
-              message.text,
+              message.text ?? '',
               style: TextStyle(
                 color: isMine
                     ? Theme.of(context).colorScheme.onPrimary

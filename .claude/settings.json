@@ -8,7 +8,8 @@
       "Read(//c/Users/user/flutter/**)",
       "Bash(grep -rln \"valueOrNull\" \"$HOME/AppData/Local/Pub/Cache/hosted/pub.dev/riverpod-3.4.2/lib\" 2>&1)",
       "Read(//c/Users/user/AppData/Local/Pub/Cache/hosted/pub.dev/riverpod-3.4.2/lib/**)",
-      "Bash(npx prisma *)"
+      "Bash(npx prisma *)",
+      "Read(//c/Users/user/AppData/Local/Pub/Cache/hosted/pub.dev/receive_sharing_intent-1.9.0/**)"
     ]
   }
 }
