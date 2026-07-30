@@ -1,11 +1,18 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import 'features/share/extract_url.dart';
 import 'router/app_router.dart';
+
+/// The share-intent plugin only has Android/iOS implementations; calling it
+/// on desktop/web would throw MissingPluginException.
+bool get _supportsShareIntent =>
+    !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
 class OurChatApp extends ConsumerStatefulWidget {
   const OurChatApp({super.key});
@@ -20,10 +27,12 @@ class _OurChatAppState extends ConsumerState<OurChatApp> {
   @override
   void initState() {
     super.initState();
-    _handleInitialShare();
-    _shareSub = ReceiveSharingIntent.instance.getMediaStream().listen(
-      _handleSharedFiles,
-    );
+    if (_supportsShareIntent) {
+      _handleInitialShare();
+      _shareSub = ReceiveSharingIntent.instance.getMediaStream().listen(
+        _handleSharedFiles,
+      );
+    }
   }
 
   Future<void> _handleInitialShare() async {
