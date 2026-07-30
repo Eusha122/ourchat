@@ -7,6 +7,8 @@ import '../features/auth/screens/register_screen.dart';
 import '../features/auth/state/auth_controller.dart';
 import '../features/chats/chats_screen.dart';
 import '../features/feed/feed_screen.dart';
+import '../features/posts/screens/post_detail_screen.dart';
+import '../features/posts/screens/upload_post_screen.dart';
 import '../features/profile/profile_screen.dart';
 import '../features/search/search_screen.dart';
 import '../features/splash/splash_screen.dart';
@@ -56,6 +58,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
         path: '/register',
         builder: (context, state) => const RegisterScreen(),
       ),
+      GoRoute(
+        path: '/upload-post',
+        builder: (context, state) => const UploadPostScreen(),
+      ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {
           return AppShell(navigationShell: navigationShell);
@@ -74,6 +80,14 @@ final goRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/feed',
                 builder: (context, state) => const FeedScreen(),
+                routes: [
+                  GoRoute(
+                    path: ':postId',
+                    builder: (context, state) => PostDetailScreen(
+                      postId: state.pathParameters['postId']!,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
