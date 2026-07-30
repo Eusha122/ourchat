@@ -13,6 +13,7 @@ import '../features/posts/screens/post_detail_screen.dart';
 import '../features/posts/screens/upload_post_screen.dart';
 import '../features/profile/profile_screen.dart';
 import '../features/search/search_screen.dart';
+import '../features/share/screens/share_target_screen.dart';
 import '../features/splash/splash_screen.dart';
 import '../features/users/screens/public_profile_screen.dart';
 import '../shell/app_shell.dart';
@@ -64,6 +65,12 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/upload-post',
         builder: (context, state) => const UploadPostScreen(),
+      ),
+      GoRoute(
+        path: '/share-target',
+        builder: (context, state) => ShareTargetScreen(
+          sharedUrl: state.extra as String,
+        ),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {
