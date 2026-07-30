@@ -32,6 +32,13 @@ Widget _appWith(AuthState initialAuthState) {
   );
 }
 
+/// Taps a pill in the custom top tab bar by its label (there's no
+/// NavigationDestination widget anymore - it's a plain GestureDetector+Text).
+Future<void> _tapTab(WidgetTester tester, String label) async {
+  await tester.tap(find.text(label).first);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('Shows the login screen when unauthenticated', (tester) async {
     await tester.pumpWidget(_appWith(const AuthState.unauthenticated()));
@@ -55,12 +62,14 @@ void main() {
 
     // The test harness has no real network, so Chats lands on its error
     // state rather than a real conversation list - this still proves the
-    // app landed on the Chats tab by default.
-    expect(find.widgetWithText(AppBar, 'Chats'), findsOneWidget);
+    // app landed on the Chats tab by default. The greeting header is
+    // unique to the Chats screen (unlike the "Chats" tab-bar label, which
+    // also exists as a pill label regardless of which tab is active).
+    expect(find.text('Hello,'), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
   });
 
-  testWidgets('Bottom nav switches to the Feed tab', (tester) async {
+  testWidgets('Top tab bar switches to the Gallery tab', (tester) async {
     await tester.pumpWidget(
       _appWith(
         AuthState.authenticated(
@@ -72,15 +81,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(NavigationDestination, 'Feed'));
-    await tester.pumpAndSettle();
+    await _tapTab(tester, 'Gallery');
 
     // The test harness has no real network, so the feed lands on its error
     // state rather than showing real posts - this still proves navigation
-    // to the Feed tab worked. (Chats' own Retry button from the initial tab
-    // stays mounted underneath via IndexedStack, so there may be more than
-    // one on screen.)
-    expect(find.widgetWithText(AppBar, 'Feed'), findsOneWidget);
+    // to the Gallery tab worked. (Chats' own Retry button from the initial
+    // tab stays mounted underneath via IndexedStack, so there may be more
+    // than one on screen.)
+    expect(find.widgetWithText(AppBar, 'Gallery'), findsOneWidget);
     expect(find.text('Retry'), findsWidgets);
   });
 
@@ -98,8 +106,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(NavigationDestination, 'Profile'));
-    await tester.pumpAndSettle();
+    await _tapTab(tester, 'Profile');
 
     expect(find.text('@tester'), findsOneWidget);
     expect(find.text('Edit profile'), findsOneWidget);
@@ -131,8 +138,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(NavigationDestination, 'Search'));
-    await tester.pumpAndSettle();
+    await _tapTab(tester, 'Search');
 
     expect(find.text('Search for people by username'), findsOneWidget);
   });

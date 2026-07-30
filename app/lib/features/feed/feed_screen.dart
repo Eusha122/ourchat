@@ -123,7 +123,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Feed')),
+      appBar: AppBar(title: const Text('Gallery')),
       floatingActionButton: FloatingActionButton(
         onPressed: _openUploadPost,
         child: const Icon(Icons.add_a_photo),

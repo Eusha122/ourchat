@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../core/theme_mode_controller.dart';
 import '../auth/data/auth_models.dart';
 import '../auth/state/auth_controller.dart';
 import '../users/data/users_api.dart';
@@ -90,10 +91,23 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
+    final themeMode = ref.watch(themeModeProvider);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Profile'),
         actions: [
+          IconButton(
+            onPressed: () => ref.read(themeModeProvider.notifier).toggle(),
+            icon: Icon(
+              themeMode == ThemeMode.dark
+                  ? Icons.light_mode_outlined
+                  : Icons.dark_mode_outlined,
+            ),
+            tooltip: themeMode == ThemeMode.dark
+                ? 'Switch to light mode'
+                : 'Switch to dark mode',
+          ),
           IconButton(
             onPressed: () =>
                 ref.read(authControllerProvider.notifier).logout(),
@@ -211,7 +225,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           const SizedBox(height: 32),
           const Divider(),
           const SizedBox(height: 16),
-          const Text('Your post grid will appear here (Phase 3)'),
+          const Text('Your posts will appear here'),
         ],
       ),
     );

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../auth/state/auth_controller.dart';
 import '../chat/data/chat_models.dart';
 import '../chat/data/conversations_api.dart';
 import '../chat/state/chat_providers.dart';
@@ -69,9 +70,47 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final user = ref.watch(authControllerProvider).value?.user;
+    final greetingName = user?.displayName?.isNotEmpty == true
+        ? user!.displayName!
+        : user?.username ?? '';
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Chats')),
-      body: _buildBody(),
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Hello,',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        Text(
+                          greetingName,
+                          style: Theme.of(context).textTheme.headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                      ],
+                    ),
+                  ),
+                  _HeaderIconButton(
+                    icon: Icons.search_rounded,
+                    onTap: () => context.go('/search'),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(child: _buildBody()),
+          ],
+        ),
+      ),
     );
   }
 
@@ -112,47 +151,128 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         itemCount: _conversations.length,
         itemBuilder: (context, index) {
           final conversation = _conversations[index];
-          final other = conversation.otherParticipant;
-          final lastMessage = conversation.lastMessage;
-          return ListTile(
-            leading: CircleAvatar(
-              backgroundImage: other.avatarUrl != null
-                  ? CachedNetworkImageProvider(other.avatarUrl!)
-                  : null,
-              child: other.avatarUrl == null
-                  ? const Icon(Icons.person)
-                  : null,
-            ),
-            title: Text(
-              other.displayName?.isNotEmpty == true
-                  ? other.displayName!
-                  : '@${other.username}',
-            ),
-            subtitle: lastMessage != null
-                ? Text(
-                    lastMessage.preview,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  )
-                : const Text('Say hi!'),
-            trailing: conversation.unreadCount > 0
-                ? CircleAvatar(
-                    radius: 10,
-                    child: Text(
-                      '${conversation.unreadCount}',
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                  )
-                : null,
+          return _ChatListTile(
+            conversation: conversation,
             onTap: () async {
-              await context.push('/chats/${conversation.id}', extra: other);
+              await context.push(
+                '/chats/${conversation.id}',
+                extra: conversation.otherParticipant,
+              );
               _load();
             },
           );
         },
+      ),
+    );
+  }
+}
+
+class _HeaderIconButton extends StatelessWidget {
+  const _HeaderIconButton({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: colorScheme.onSurface, size: 20),
+      ),
+    );
+  }
+}
+
+class _ChatListTile extends StatelessWidget {
+  const _ChatListTile({required this.conversation, required this.onTap});
+
+  final Conversation conversation;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final other = conversation.otherParticipant;
+    final lastMessage = conversation.lastMessage;
+    final colorScheme = Theme.of(context).colorScheme;
+    final hasUnread = conversation.unreadCount > 0;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 26,
+              backgroundColor: colorScheme.primary.withValues(alpha: 0.15),
+              backgroundImage: other.avatarUrl != null
+                  ? CachedNetworkImageProvider(other.avatarUrl!)
+                  : null,
+              child: other.avatarUrl == null
+                  ? Icon(Icons.person, color: colorScheme.primary)
+                  : null,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    other.displayName?.isNotEmpty == true
+                        ? other.displayName!
+                        : '@${other.username}',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    lastMessage?.preview ?? 'Say hi!',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: hasUnread
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (hasUnread)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 3,
+                ),
+                decoration: BoxDecoration(
+                  color: colorScheme.primary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${conversation.unreadCount}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -30,11 +30,11 @@ class LinkMessageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final background = isMine
-        ? Theme.of(context).colorScheme.primary
-        : Theme.of(context).colorScheme.surfaceContainerHighest;
+        ? Theme.of(context).colorScheme.surface
+        : Theme.of(context).colorScheme.primary;
     final foreground = isMine
-        ? Theme.of(context).colorScheme.onPrimary
-        : Theme.of(context).colorScheme.onSurfaceVariant;
+        ? Theme.of(context).colorScheme.onSurface
+        : Colors.white;
 
     return GestureDetector(
       onTap: _open,
