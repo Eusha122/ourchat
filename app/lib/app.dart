@@ -1,20 +1,17 @@
-import 'dart:async';
-import 'dart:io' show Platform;
-
-import 'package:flutter/foundation.dart' show kIsWeb;
+// TODO(share-intent): receive_sharing_intent requires Android compileSdk 37,
+// which currently fails to resolve on this toolchain (Google's package
+// manifest for the very-new API 37 platform uses a "37.0" internal path that
+// AGP's compileSdk="37" lookup can't match, even after manually fixing the
+// SDK folder/manifest - it gets re-downloaded wrong on every build). Disabled
+// for now so the rest of the app can build/run; re-enable once a proper
+// cmdline-tools/sdkmanager install resolves the SDK 37 mismatch, then restore
+// this file from git history plus the `receive_sharing_intent` pubspec dep.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import 'core/theme.dart';
 import 'core/theme_mode_controller.dart';
-import 'features/share/extract_url.dart';
 import 'router/app_router.dart';
-
-/// The share-intent plugin only has Android/iOS implementations; calling it
-/// on desktop/web would throw MissingPluginException.
-bool get _supportsShareIntent =>
-    !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
 class OurChatApp extends ConsumerStatefulWidget {
   const OurChatApp({super.key});
@@ -24,42 +21,6 @@ class OurChatApp extends ConsumerStatefulWidget {
 }
 
 class _OurChatAppState extends ConsumerState<OurChatApp> {
-  StreamSubscription<List<SharedMediaFile>>? _shareSub;
-
-  @override
-  void initState() {
-    super.initState();
-    if (_supportsShareIntent) {
-      _handleInitialShare();
-      _shareSub = ReceiveSharingIntent.instance.getMediaStream().listen(
-        _handleSharedFiles,
-      );
-    }
-  }
-
-  Future<void> _handleInitialShare() async {
-    final initial = await ReceiveSharingIntent.instance.getInitialMedia();
-    _handleSharedFiles(initial);
-  }
-
-  void _handleSharedFiles(List<SharedMediaFile> files) {
-    if (files.isEmpty) return;
-    for (final file in files) {
-      final url = extractUrl(file.path);
-      if (url != null) {
-        ref.read(goRouterProvider).push('/share-target', extra: url);
-        break;
-      }
-    }
-    ReceiveSharingIntent.instance.reset();
-  }
-
-  @override
-  void dispose() {
-    _shareSub?.cancel();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final router = ref.watch(goRouterProvider);
