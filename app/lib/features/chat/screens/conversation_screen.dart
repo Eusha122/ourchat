@@ -353,9 +353,8 @@ class _NoisePainter extends CustomPainter {
 // Header
 // ─────────────────────────────────────────────────────────────
 
-/// Builds the header silhouette: a soft 22px shoulder on the left and a long
-/// organic sweep on the right, so the purple canvas flows up into the corner
-/// instead of meeting a symmetric rounded rectangle.
+/// Builds the header silhouette: symmetric organic curves on both left and
+/// right, so the header feels balanced instead of asymmetric.
 Path _headerPath(Size size) {
   final w = size.width;
   final h = size.height;
@@ -364,8 +363,8 @@ Path _headerPath(Size size) {
     ..lineTo(w, 0)
     ..lineTo(w, h - 58)
     ..cubicTo(w, h - 14, w - 15, h, w - 58, h)
-    ..lineTo(24, h)
-    ..quadraticBezierTo(0, h, 0, h - 24)
+    ..lineTo(58, h)
+    ..cubicTo(15, h, 0, h - 14, 0, h - 58)
     ..close();
 }
 

@@ -4,6 +4,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../features/chat/data/chat_models.dart';
 import 'api_client.dart';
+import 'notification_service.dart';
 
 class SocketService {
   SocketService({required this.accessToken});
@@ -31,9 +32,9 @@ class SocketService {
     );
 
     _socket!.on('message:new', (data) {
-      _messageController.add(
-        ChatMessage.fromJson(Map<String, dynamic>.from(data as Map)),
-      );
+      final message = ChatMessage.fromJson(Map<String, dynamic>.from(data as Map));
+      _messageController.add(message);
+      NotificationService().playMessageNotification();
     });
     _socket!.on('conversation:updated', (data) {
       _conversationUpdateController.add(

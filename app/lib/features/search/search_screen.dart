@@ -69,7 +69,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 18),
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 18),
           child: Container(
             height: 52,
             decoration: BoxDecoration(

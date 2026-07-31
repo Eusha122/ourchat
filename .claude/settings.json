@@ -34,7 +34,11 @@
       "Bash(curl -s http://localhost:4000/users/search?q=a -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzODYzMjU2Zi05ODEzLTQwODktYmE0OC1iMmNkYTM0YmFiYzYiLCJpYXQiOjE3ODU0OTQ2MzUsImV4cCI6MTc4NTQ5NTUzNX0.5If3LGQC4FfpszkXt0hrLX2CE5lUFRTQMOMRyGjulo0')",
       "PowerShell(& \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" shell input text \"test\")",
       "PowerShell(& \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" shell screencap -p /sdcard/search_debug2.png)",
-      "PowerShell(& \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" pull /sdcard/search_debug2.png \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\f--ecripted-chat\\\\582d3222-9e79-441a-9710-06aae1a0e796\\\\scratchpad\\\\search_debug2.png\")"
+      "PowerShell(& \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" pull /sdcard/search_debug2.png \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\f--ecripted-chat\\\\582d3222-9e79-441a-9710-06aae1a0e796\\\\scratchpad\\\\search_debug2.png\")",
+      "Bash(powershell.exe -NoProfile -Command \"Get-Content -Path 'C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\f--ecripted-chat\\\\582d3222-9e79-441a-9710-06aae1a0e796\\\\tasks\\\\premium1.output' -Wait -Tail 0\")",
+      "Bash(Select-String -Pattern \"Built build|Installing|Error|error:|FAILURE|Exception|Syncing\")",
+      "PowerShell(& \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" shell monkey -p com.ourchat.ourchat -c android.intent.category.LAUNCHER 1 2>&1)",
+      "PowerShell(& F:\\\\flutter\\\\bin\\\\flutter.bat devices 2>&1)"
     ]
   }
 }

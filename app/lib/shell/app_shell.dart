@@ -1,6 +1,9 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
+import '../features/auth/state/auth_controller.dart';
 
 const _muted = Color(0xFF8A8A8A);
 const _purple = Color(0xFF5D4EF5);
@@ -33,31 +36,67 @@ class AppShell extends ConsumerWidget {
       ),
       child: SafeArea(
         bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(34),
+        child: Column(
+          children: [
+            // Top: OurChat logo + avatar
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: const BorderRadius.vertical(
+                    bottom: Radius.circular(34),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF312A70).withValues(alpha: 0.08),
+                      blurRadius: 50,
+                      offset: const Offset(0, 18),
+                    ),
+                    BoxShadow(
+                      color: const Color(0xFF312A70).withValues(alpha: 0.04),
+                      blurRadius: 20,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
+                  child: _TopBar(onAvatarTap: () => navigationShell.goBranch(3)),
+                ),
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF312A70).withValues(alpha: 0.08),
-                  blurRadius: 50,
-                  offset: const Offset(0, -18),
-                ),
-                BoxShadow(
-                  color: const Color(0xFF312A70).withValues(alpha: 0.04),
-                  blurRadius: 20,
-                  offset: const Offset(0, -6),
-                ),
-              ],
             ),
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+            // Content
+            Expanded(
+              child: Material(
+                type: MaterialType.transparency,
+                child: navigationShell,
+              ),
+            ),
+            // Bottom: Navigation bar
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(34),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF312A70).withValues(alpha: 0.08),
+                      blurRadius: 50,
+                      offset: const Offset(0, -18),
+                    ),
+                    BoxShadow(
+                      color: const Color(0xFF312A70).withValues(alpha: 0.04),
+                      blurRadius: 20,
+                      offset: const Offset(0, -6),
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
                   child: _SegmentedNavigation(
                     currentIndex: navigationShell.currentIndex,
                     onSelected: (index) => navigationShell.goBranch(
@@ -66,18 +105,80 @@ class AppShell extends ConsumerWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 18),
-                Expanded(
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: navigationShell,
-                  ),
-                ),
-              ],
+              ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TopBar extends ConsumerWidget {
+  const _TopBar({required this.onAvatarTap});
+
+  final VoidCallback onAvatarTap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final authState = ref.watch(authControllerProvider);
+    final user = authState.value?.user;
+    final avatarUrl = user?.avatarUrl;
+
+    final placeholder = Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [_purpleEnd, _purple],
+        ),
+        shape: BoxShape.circle,
+      ),
+      child: Center(
+        child: Text(
+          user?.username.isNotEmpty == true
+              ? user!.username.characters.first.toUpperCase()
+              : '?',
+          style: const TextStyle(
+            fontFamily: 'Poppins',
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),
+    );
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          'OurChat',
+          style: const TextStyle(
+            fontFamily: 'Poppins',
+            color: Color(0xFF1B1B1B),
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.5,
+          ),
+        ),
+        GestureDetector(
+          onTap: onAvatarTap,
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: ClipOval(
+              child: avatarUrl == null
+                  ? placeholder
+                  : CachedNetworkImage(
+                      imageUrl: avatarUrl,
+                      fit: BoxFit.cover,
+                      errorWidget: (_, _, _) => placeholder,
+                    ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

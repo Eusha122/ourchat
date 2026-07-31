@@ -108,7 +108,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
     return ListView(
       physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.end,
