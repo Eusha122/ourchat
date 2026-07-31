@@ -43,6 +43,7 @@ dependencies:
   socket_io_client: ^3.1.6
   url_launcher: ^6.3.2
   just_audio: ^0.9.36
+  flutter_local_notifications: ^18.0.1
   # receive_sharing_intent: ^1.9.0 # disabled temporarily - see app.dart TODO
 
 dev_dependencies:

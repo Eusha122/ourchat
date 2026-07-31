@@ -76,11 +76,21 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         .where((t) => t.userId == widget.otherParticipant.id)
         .listen(_onTyping);
     ref.read(conversationsApiProvider).markRead(widget.conversationId);
+    // Marks this conversation as "open" so the global listener doesn't pop
+    // a banner/sound for messages we're already looking at.
+    Future.microtask(
+      () => ref
+          .read(activeConversationIdProvider.notifier)
+          .set(widget.conversationId),
+    );
   }
 
   @override
   void dispose() {
     ref.read(socketServiceProvider)?.leaveConversation(widget.conversationId);
+    if (ref.read(activeConversationIdProvider) == widget.conversationId) {
+      ref.read(activeConversationIdProvider.notifier).set(null);
+    }
     _messageSub?.cancel();
     _typingSub?.cancel();
     _typingResetTimer?.cancel();

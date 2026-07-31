@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/global_message_listener.dart';
 import 'core/theme.dart';
 import 'router/app_router.dart';
 
@@ -20,6 +21,8 @@ class OurChatApp extends ConsumerStatefulWidget {
 }
 
 class _OurChatAppState extends ConsumerState<OurChatApp> {
+  final _scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+
   @override
   Widget build(BuildContext context) {
     final router = ref.watch(goRouterProvider);
@@ -30,6 +33,11 @@ class _OurChatAppState extends ConsumerState<OurChatApp> {
       darkTheme: buildDarkTheme(),
       themeMode: ThemeMode.light,
       routerConfig: router,
+      scaffoldMessengerKey: _scaffoldMessengerKey,
+      builder: (context, child) => GlobalMessageListener(
+        scaffoldMessengerKey: _scaffoldMessengerKey,
+        child: child ?? const SizedBox.shrink(),
+      ),
     );
   }
 }

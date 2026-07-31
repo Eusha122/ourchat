@@ -201,13 +201,21 @@ conversationsRouter.post("/:conversationId/messages", requireAuth, async (req, r
 
   const payload = toPublicMessage(message);
 
-  const io = getIO();
-  io.to(`conversation:${conversationId}`).emit("message:new", payload);
-
   const otherParticipants = await prisma.conversationParticipant.findMany({
     where: { conversationId, userId: { not: req.userId } },
     select: { userId: true },
   });
+
+  const io = getIO();
+  // Deliver to anyone with this conversation open (the `conversation:` room)
+  // AND to every other participant's personal room, so the message still
+  // arrives even if they haven't opened this conversation on their device.
+  // Chaining `.to()` targets a union of rooms and Socket.IO dedupes per
+  // socket, so a participant who happens to be in both never gets it twice.
+  io.to(`conversation:${conversationId}`)
+    .to(otherParticipants.map(({ userId }) => `user:${userId}`))
+    .emit("message:new", payload);
+
   for (const { userId } of otherParticipants) {
     io.to(`user:${userId}`).emit("conversation:updated", {
       conversationId,

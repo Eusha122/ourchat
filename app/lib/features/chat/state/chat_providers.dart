@@ -12,13 +12,30 @@ final conversationsApiProvider = Provider<ConversationsApi>((ref) {
 /// Rebuilds (and reconnects) whenever the access token changes; disposed
 /// automatically when it becomes null (e.g. on logout).
 final socketServiceProvider = Provider<SocketService?>((ref) {
-  final accessToken = ref.watch(
-    authControllerProvider.select((state) => state.value?.accessToken),
+  final auth = ref.watch(
+    authControllerProvider.select((state) => state.value),
   );
-  if (accessToken == null) return null;
+  final accessToken = auth?.accessToken;
+  final userId = auth?.user?.id;
+  if (accessToken == null || userId == null) return null;
 
-  final service = SocketService(accessToken: accessToken);
+  final service = SocketService(accessToken: accessToken, currentUserId: userId);
   service.connect();
   ref.onDispose(service.dispose);
   return service;
 });
+
+/// The conversation currently open on screen, if any. Set/cleared by
+/// ConversationScreen so the global notification listener can skip showing
+/// a banner for the chat you're already looking at.
+class ActiveConversationController extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void set(String? conversationId) => state = conversationId;
+}
+
+final activeConversationIdProvider =
+    NotifierProvider<ActiveConversationController, String?>(
+  ActiveConversationController.new,
+);

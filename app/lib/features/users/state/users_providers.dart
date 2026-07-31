@@ -10,7 +10,11 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   final accessToken = ref.watch(
     authControllerProvider.select((state) => state.value?.accessToken),
   );
-  return ApiClient(accessToken: accessToken);
+  return ApiClient(
+    accessToken: accessToken,
+    onUnauthorized: () =>
+        ref.read(authControllerProvider.notifier).refreshAccessToken(),
+  );
 });
 
 final usersApiProvider = Provider<UsersApi>((ref) {

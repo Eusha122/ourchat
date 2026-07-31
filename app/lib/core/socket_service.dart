@@ -7,9 +7,10 @@ import 'api_client.dart';
 import 'notification_service.dart';
 
 class SocketService {
-  SocketService({required this.accessToken});
+  SocketService({required this.accessToken, required this.currentUserId});
 
   final String accessToken;
+  final String currentUserId;
   io.Socket? _socket;
 
   final _messageController = StreamController<ChatMessage>.broadcast();
@@ -34,7 +35,11 @@ class SocketService {
     _socket!.on('message:new', (data) {
       final message = ChatMessage.fromJson(Map<String, dynamic>.from(data as Map));
       _messageController.add(message);
-      NotificationService().playMessageNotification();
+      // Skip our own messages echoed back (e.g. when we have the
+      // conversation open and just sent it ourselves).
+      if (message.sender.id != currentUserId) {
+        NotificationService().playMessageNotification();
+      }
     });
     _socket!.on('conversation:updated', (data) {
       _conversationUpdateController.add(
