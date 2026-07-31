@@ -22,8 +22,8 @@ class UsersApi {
       final response = await _dio.patch(
         '/users/me',
         data: {
-          if (displayName != null) 'displayName': displayName,
-          if (bio != null) 'bio': bio,
+          'displayName': ?displayName,
+          'bio': ?bio,
         },
       );
       final data = response.data as Map<String, dynamic>;
@@ -72,7 +72,7 @@ class UsersApi {
       final response = await _dio.get(
         '/users/$username/posts',
         queryParameters: {
-          if (cursor != null) 'cursor': cursor,
+          'cursor': ?cursor,
           'take': take,
         },
       );

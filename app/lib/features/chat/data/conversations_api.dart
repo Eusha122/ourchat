@@ -45,7 +45,7 @@ class ConversationsApi {
       final response = await _dio.get(
         '/conversations/$conversationId/messages',
         queryParameters: {
-          if (cursor != null) 'cursor': cursor,
+          'cursor': ?cursor,
           'take': take,
         },
       );

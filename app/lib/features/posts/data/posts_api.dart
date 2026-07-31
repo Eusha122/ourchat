@@ -20,7 +20,7 @@ class PostsApi {
       final response = await _dio.get(
         '/posts',
         queryParameters: {
-          if (cursor != null) 'cursor': cursor,
+          'cursor': ?cursor,
           'take': take,
         },
       );
@@ -59,7 +59,7 @@ class PostsApi {
       final response = await _dio.get(
         '/posts/$postId/comments',
         queryParameters: {
-          if (cursor != null) 'cursor': cursor,
+          'cursor': ?cursor,
           'take': take,
         },
       );

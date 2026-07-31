@@ -6,7 +6,9 @@ plugins {
 
 android {
     namespace = "com.ourchat.ourchat"
-    compileSdk = flutter.compileSdkVersion
+    // receive_sharing_intent requires SDK 37+; flutter.compileSdkVersion
+    // (36) isn't high enough yet.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

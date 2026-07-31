@@ -13,7 +13,17 @@
       "Read(//c/Users/user/AppData/Local/Pub/Cache/hosted/pub.dev/receive_sharing_intent-1.9.0/lib/src/**)",
       "Read(//c/Users/user/AppData/Local/Temp/**)",
       "Bash(taskkill //IM ourchat.exe //F)",
-      "Bash(tasklist //FI \"IMAGENAME eq dart.exe\")"
+      "Bash(tasklist //FI \"IMAGENAME eq dart.exe\")",
+      "Bash(curl -s http://localhost:4000/health)",
+      "Bash(curl -s http://192.168.0.100:4000/health --max-time 5)",
+      "Bash(ls \"/c/Users/user/AppData/Local/Android/Sdk/platforms\" 2>&1)",
+      "Read(//c/Users/user/AppData/Local/Android/Sdk/platforms/**)",
+      "Bash(cat \"/c/Users/user/AppData/Local/Android/Sdk/platforms/android-37.0/source.properties\" 2>&1)",
+      "Read(//c/Users/user/AppData/Local/Android/Sdk/platforms/android-37.0/**)",
+      "Bash(grep -o '<path[^<]*</path>\\\\|path=\"[^\"]*\"' \"/c/Users/user/AppData/Local/Android/Sdk/platforms/android-37/package.xml\" 2>&1 | head -5)",
+      "Read(//c/Users/user/AppData/Local/Android/Sdk/platforms/android-37/**)",
+      "Bash(grep -c 'android-37.0' \"/c/Users/user/AppData/Local/Android/Sdk/platforms/android-37/package.xml\")",
+      "Bash(sed -i 's/platforms;android-37\\\\.0/platforms;android-37/' \"/c/Users/user/AppData/Local/Android/Sdk/platforms/android-37/package.xml\")"
     ]
   }
 }
