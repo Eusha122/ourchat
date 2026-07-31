@@ -28,7 +28,13 @@
       "PowerShell(& \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" shell \"nc -zv -w 5 192.168.0.100 4000\")",
       "PowerShell(& \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" shell \"nc -z -w 5 192.168.0.100 4000 && echo OPEN || echo CLOSED_OR_FILTERED\")",
       "PowerShell(Get-Process | Where-Object { $_.ProcessName -match \"dart|java|gradle\" } | Select-Object Id, ProcessName, StartTime)",
-      "PowerShell(Get-Process -Id 43768,41444,43260 -ErrorAction SilentlyContinue)"
+      "PowerShell(Get-Process -Id 43768,41444,43260 -ErrorAction SilentlyContinue)",
+      "Bash(curl -s -X POST http://localhost:4000/auth/login -H \"Content-Type: application/json\" -d '{\"email\":\"alice@example.com\",\"password\":\"password123\"}')",
+      "Bash(curl -s http://localhost:4000/users/search?q=test -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzODYzMjU2Zi05ODEzLTQwODktYmE0OC1iMmNkYTM0YmFiYzYiLCJpYXQiOjE3ODU0OTQ2MzUsImV4cCI6MTc4NTQ5NTUzNX0.5If3LGQC4FfpszkXt0hrLX2CE5lUFRTQMOMRyGjulo0')",
+      "Bash(curl -s http://localhost:4000/users/search?q=a -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzODYzMjU2Zi05ODEzLTQwODktYmE0OC1iMmNkYTM0YmFiYzYiLCJpYXQiOjE3ODU0OTQ2MzUsImV4cCI6MTc4NTQ5NTUzNX0.5If3LGQC4FfpszkXt0hrLX2CE5lUFRTQMOMRyGjulo0')",
+      "PowerShell(& \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" shell input text \"test\")",
+      "PowerShell(& \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" shell screencap -p /sdcard/search_debug2.png)",
+      "PowerShell(& \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" pull /sdcard/search_debug2.png \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\f--ecripted-chat\\\\582d3222-9e79-441a-9710-06aae1a0e796\\\\scratchpad\\\\search_debug2.png\")"
     ]
   }
 }

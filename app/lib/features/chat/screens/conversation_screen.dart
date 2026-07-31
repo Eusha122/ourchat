@@ -224,7 +224,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       );
     }
     if (_messages.isEmpty) {
-      return const _ReferenceConversation();
+      return _EmptyConversation(name: widget.otherParticipant.username);
     }
 
     final myId = ref.watch(authControllerProvider).value?.user?.id;
@@ -553,7 +553,7 @@ class _Composer extends StatelessWidget {
                         decoration: const InputDecoration(
                           isDense: true,
                           filled: false,
-                          hintText: 'Ok. Let me check',
+                          hintText: 'Type a message',
                           hintStyle: TextStyle(
                             fontFamily: 'Poppins',
                             color: Color(0xFF9A9AA5),
@@ -700,93 +700,52 @@ class _TextAction extends StatelessWidget {
   }
 }
 
-class _ReferenceConversation extends StatelessWidget {
-  const _ReferenceConversation();
+class _EmptyConversation extends StatelessWidget {
+  const _EmptyConversation({required this.name});
+
+  final String name;
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(22, 24, 22, 12),
-      children: const [
-        _Bubble(text: 'Hey 👋', mine: false),
-        _Bubble(text: 'Are you available for a New\nUI Project', mine: false),
-        SizedBox(height: 6),
-        _Bubble(text: 'Hello!', mine: true),
-        _Bubble(text: 'yes, have some space for the\nnew task', mine: true),
-        SizedBox(height: 6),
-        _Bubble(text: 'Cool, should I share the details now?', mine: false),
-        SizedBox(height: 6),
-        _Bubble(text: 'Yes Sure, please', mine: true),
-        SizedBox(height: 6),
-        _Bubble(text: 'Great, here is the SOW of the Project', mine: false),
-        SizedBox(height: 6),
-        _DocumentBubble(),
-      ],
-    );
-  }
-}
-
-class _DocumentBubble extends StatelessWidget {
-  const _DocumentBubble();
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 5),
-        padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Row(
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.description_outlined,
-              color: Colors.white,
-              size: 19,
-            ),
-            const SizedBox(width: 10),
-            const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'UI Brief.docx',
-                  style: TextStyle(
-                    fontFamily: 'Poppins',
-                    color: Colors.white,
-                    fontSize: 11.5,
-                    height: 1.3,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                Text(
-                  '269.18 KB',
-                  style: TextStyle(
-                    fontFamily: 'Poppins',
-                    color: Color(0xBFFFFFFF),
-                    fontSize: 9,
-                    height: 1.3,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(width: 20),
             Container(
-              width: 34,
-              height: 34,
-              alignment: Alignment.center,
+              width: 62,
+              height: 62,
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.16),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
-                Icons.arrow_downward_rounded,
+                Icons.waving_hand_rounded,
                 color: Colors.white,
-                size: 17,
+                size: 26,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              'Say hi to @$name',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'This is the start of your conversation.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                color: Colors.white70,
+                fontSize: 12,
+                height: 1.4,
               ),
             ),
           ],

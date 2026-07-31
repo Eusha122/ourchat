@@ -83,7 +83,11 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
             child: _buildBody(),
           ),
         ),
-        Positioned(right: 26, bottom: 30, child: _ComposeButton(onTap: _load)),
+        Positioned(
+          right: 26,
+          bottom: 30,
+          child: _ComposeButton(onTap: () => context.go('/search')),
+        ),
       ],
     );
   }
@@ -93,19 +97,20 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
       return const _SoftLoader(key: ValueKey('loading'));
     }
 
-    if (_error != null && _conversations.isEmpty) {
-      return _ChatList(key: const ValueKey('preview'), entries: _demoEntries);
+    if (_error != null) {
+      return _ErrorState(key: const ValueKey('error'), message: _error!, onRetry: _load);
     }
 
-    final entries = _conversations.isEmpty
-        ? _demoEntries
-        : _conversations.map(_ChatEntry.fromConversation).toList();
+    if (_conversations.isEmpty) {
+      return const _EmptyState(key: ValueKey('empty'));
+    }
+
+    final entries = _conversations.map(_ChatEntry.fromConversation).toList();
 
     return _ChatList(
       key: const ValueKey('chats'),
       entries: entries,
       onTap: (index) async {
-        if (_conversations.isEmpty) return;
         final conversation = _conversations[index];
         await context.push(
           '/chats/${conversation.id}',
@@ -113,6 +118,152 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
         );
         _load();
       },
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF6C63FF), Color(0xFF5D4EF5)],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: _purple.withValues(alpha: 0.28),
+                    blurRadius: 24,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.chat_bubble_rounded,
+                color: Colors.white,
+                size: 28,
+              ),
+            ),
+            const SizedBox(height: 22),
+            const Text(
+              'No conversations yet',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                color: _ink,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Search for someone by username to start\nyour first chat.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                color: Color(0xFF9A9AA5),
+                fontSize: 12.5,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 22),
+            GestureDetector(
+              onTap: () => context.go('/search'),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 22,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: _purple,
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: const Text(
+                  'Find people',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    color: Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorState extends StatelessWidget {
+  const _ErrorState({super.key, required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.cloud_off_rounded,
+              color: Color(0xFFB9B9C4),
+              size: 40,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                color: Color(0xFF9A9AA5),
+                fontSize: 12.5,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 18),
+            GestureDetector(
+              onTap: onRetry,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 22,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: _purple,
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: const Text(
+                  'Retry',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    color: Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -187,64 +338,31 @@ class _ChatRowState extends State<_ChatRow> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            entry.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontFamily: 'Poppins',
-                              color: _ink,
-                              fontSize: 14,
-                              height: 1.2,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: -0.2,
-                            ),
-                          ),
-                        ),
-                        if (entry.pinned) ...[
-                          const SizedBox(width: 6),
-                          Transform.rotate(
-                            angle: 0.6,
-                            child: const Icon(
-                              Icons.push_pin_rounded,
-                              color: _purple,
-                              size: 12.5,
-                            ),
-                          ),
-                        ],
-                      ],
+                    Text(
+                      entry.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        color: _ink,
+                        fontSize: 14,
+                        height: 1.2,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.2,
+                      ),
                     ),
                     const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        if (entry.voice) ...[
-                          const Icon(
-                            Icons.mic_rounded,
-                            color: Color(0xFFE05A63),
-                            size: 13,
-                          ),
-                          const SizedBox(width: 4),
-                        ],
-                        Flexible(
-                          child: Text(
-                            entry.preview,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontFamily: 'Poppins',
-                              color: entry.accentPreview
-                                  ? _purple
-                                  : const Color(0xFF9A9AA5),
-                              fontSize: 11.5,
-                              height: 1.2,
-                              fontWeight: FontWeight.w400,
-                            ),
-                          ),
-                        ),
-                      ],
+                    Text(
+                      entry.preview,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        color: Color(0xFF9A9AA5),
+                        fontSize: 11.5,
+                        height: 1.2,
+                        fontWeight: FontWeight.w400,
+                      ),
                     ),
                   ],
                 ),
@@ -503,9 +621,6 @@ class _ChatEntry {
     required this.fallback,
     this.avatarUrl,
     this.unread = 0,
-    this.pinned = false,
-    this.voice = false,
-    this.accentPreview = false,
   });
 
   factory _ChatEntry.fromConversation(Conversation conversation) {
@@ -529,9 +644,6 @@ class _ChatEntry {
   final String? avatarUrl;
   final Color fallback;
   final int unread;
-  final bool pinned;
-  final bool voice;
-  final bool accentPreview;
 
   static String _formatTime(DateTime date) {
     final local = date.toLocal();
@@ -541,59 +653,3 @@ class _ChatEntry {
     return '$hour:$minute $suffix';
   }
 }
-
-const _demoEntries = [
-  _ChatEntry(
-    name: 'Larry Machigo',
-    preview: 'Ok. Let me check',
-    time: '09:38 AM',
-    avatarUrl: 'https://randomuser.me/api/portraits/men/32.jpg',
-    fallback: Color(0xFF786759),
-    pinned: true,
-  ),
-  _ChatEntry(
-    name: 'Natalie Nora',
-    preview: 'Natalie is typing...',
-    time: '',
-    avatarUrl: 'https://randomuser.me/api/portraits/women/44.jpg',
-    fallback: Color(0xFF35A8AC),
-    unread: 2,
-    accentPreview: true,
-  ),
-  _ChatEntry(
-    name: 'Jennifer Jones',
-    preview: 'Voice message',
-    time: '02:03 AM',
-    avatarUrl: 'https://randomuser.me/api/portraits/women/65.jpg',
-    fallback: Color(0xFFB25A59),
-    voice: true,
-  ),
-  _ChatEntry(
-    name: 'Larry Machigo',
-    preview: 'See you tomorrow, take care.',
-    time: 'Yesterday',
-    avatarUrl: 'https://randomuser.me/api/portraits/men/75.jpg',
-    fallback: Color(0xFF44647A),
-  ),
-  _ChatEntry(
-    name: 'Sofia',
-    preview: 'Oh... thank you so much',
-    time: '26 May',
-    avatarUrl: 'https://randomuser.me/api/portraits/women/12.jpg',
-    fallback: Color(0xFF15141C),
-  ),
-  _ChatEntry(
-    name: 'Haider Ive',
-    preview: '🙏 Sticker',
-    time: '12 Jun',
-    avatarUrl: 'https://randomuser.me/api/portraits/men/22.jpg',
-    fallback: Color(0xFF35343E),
-  ),
-  _ChatEntry(
-    name: 'Mr. Elon',
-    preview: 'Cool :-)))',
-    time: '18 Jun',
-    avatarUrl: 'https://randomuser.me/api/portraits/men/46.jpg',
-    fallback: Color(0xFF718187),
-  ),
-];
