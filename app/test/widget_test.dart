@@ -60,13 +60,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // The test harness has no real network, so Chats lands on its error
-    // state rather than a real conversation list - this still proves the
-    // app landed on the Chats tab by default. The greeting header is
-    // unique to the Chats screen (unlike the "Chats" tab-bar label, which
-    // also exists as a pill label regardless of which tab is active).
     expect(find.text('Hello,'), findsOneWidget);
-    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Larry Machigo'), findsWidgets);
   });
 
   testWidgets('Top tab bar switches to the Gallery tab', (tester) async {
@@ -83,13 +78,9 @@ void main() {
 
     await _tapTab(tester, 'Gallery');
 
-    // The test harness has no real network, so the feed lands on its error
-    // state rather than showing real posts - this still proves navigation
-    // to the Gallery tab worked. (Chats' own Retry button from the initial
-    // tab stays mounted underneath via IndexedStack, so there may be more
-    // than one on screen.)
-    expect(find.widgetWithText(AppBar, 'Gallery'), findsOneWidget);
-    expect(find.text('Retry'), findsWidgets);
+    // Gallery is currently a static "coming soon" placeholder (no network
+    // call), so this just proves navigation to the tab worked.
+    expect(find.text('Gallery is coming soon'), findsOneWidget);
   });
 
   testWidgets('Profile tab shows the user and toggles the edit form', (
@@ -116,6 +107,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(TextField), findsNWidgets(2));
+    await tester.drag(find.byType(ListView).last, const Offset(0, -260));
+    await tester.pumpAndSettle();
     expect(find.text('Save'), findsOneWidget);
 
     await tester.tap(find.text('Cancel'));

@@ -74,7 +74,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       _error = null;
     });
     try {
-      final updated = await ref.read(usersApiProvider).uploadAvatar(picked.path);
+      final updated = await ref
+          .read(usersApiProvider)
+          .uploadAvatar(picked.path);
       ref.read(authControllerProvider.notifier).updateUser(updated);
     } on UsersApiException catch (e) {
       setState(() => _error = e.message);
@@ -88,145 +90,373 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final user = ref.watch(authControllerProvider).value?.user;
 
     if (user == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Center(
+        child: SizedBox(
+          width: 8,
+          height: 8,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Color(0xFF5D4EF5),
+              shape: BoxShape.circle,
+            ),
+          ),
+        ),
+      );
     }
 
     final themeMode = ref.watch(themeModeProvider);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Profile'),
-        actions: [
-          IconButton(
-            onPressed: () => ref.read(themeModeProvider.notifier).toggle(),
-            icon: Icon(
-              themeMode == ThemeMode.dark
+    return ListView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            _ProfileIconButton(
+              onTap: () => ref.read(themeModeProvider.notifier).toggle(),
+              icon: themeMode == ThemeMode.dark
                   ? Icons.light_mode_outlined
                   : Icons.dark_mode_outlined,
             ),
-            tooltip: themeMode == ThemeMode.dark
-                ? 'Switch to light mode'
-                : 'Switch to dark mode',
-          ),
-          IconButton(
-            onPressed: () =>
-                ref.read(authControllerProvider.notifier).logout(),
-            icon: const Icon(Icons.logout),
-            tooltip: 'Log out',
-          ),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(24),
-        children: [
-          Center(
-            child: GestureDetector(
-              onTap: _isUploadingAvatar ? null : _pickAndUploadAvatar,
-              child: Stack(
-                children: [
-                  CircleAvatar(
-                    radius: 48,
-                    backgroundImage: user.avatarUrl != null
-                        ? CachedNetworkImageProvider(user.avatarUrl!)
-                        : null,
-                    child: user.avatarUrl == null
-                        ? const Icon(Icons.person, size: 48)
-                        : null,
-                  ),
-                  if (_isUploadingAvatar)
-                    const Positioned.fill(
-                      child: CircularProgressIndicator(),
-                    ),
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: CircleAvatar(
-                      radius: 14,
-                      child: Icon(Icons.camera_alt, size: 16),
-                    ),
-                  ),
-                ],
-              ),
+            const SizedBox(width: 9),
+            _ProfileIconButton(
+              onTap: () => ref.read(authControllerProvider.notifier).logout(),
+              icon: Icons.logout_rounded,
             ),
-          ),
-          const SizedBox(height: 16),
-          Center(
-            child: Text(
-              '@${user.username}',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-          ),
-          Center(child: Text(user.email)),
-          const SizedBox(height: 24),
-          if (_error != null) ...[
-            Text(
-              _error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-            const SizedBox(height: 16),
           ],
-          if (_isEditing) ...[
-            TextField(
-              controller: _displayNameController,
-              decoration: const InputDecoration(
-                labelText: 'Display name',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _bioController,
-              maxLength: 160,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Bio',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
+        ),
+        const SizedBox(height: 4),
+        Center(
+          child: GestureDetector(
+            onTap: _isUploadingAvatar ? null : _pickAndUploadAvatar,
+            child: Stack(
               children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _isSavingProfile
-                        ? null
-                        : () => setState(() => _isEditing = false),
-                    child: const Text('Cancel'),
+                Container(
+                  width: 96,
+                  height: 96,
+                  padding: const EdgeInsets.all(3),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Color(0x14332D69),
+                        blurRadius: 50,
+                        offset: Offset(0, 18),
+                      ),
+                      BoxShadow(
+                        color: Color(0x0A332D69),
+                        blurRadius: 20,
+                        offset: Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: ClipOval(
+                    child: user.avatarUrl == null
+                        ? const ColoredBox(
+                            color: Color(0xFFE8E5FF),
+                            child: Icon(
+                              Icons.person_rounded,
+                              color: Color(0xFF5D4EF5),
+                              size: 42,
+                            ),
+                          )
+                        : CachedNetworkImage(
+                            imageUrl: user.avatarUrl!,
+                            fit: BoxFit.cover,
+                          ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: _isSavingProfile ? null : _saveProfile,
-                    child: _isSavingProfile
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Save'),
+                if (_isUploadingAvatar)
+                  const Positioned.fill(
+                    child: Center(
+                      child: SizedBox(
+                        width: 9,
+                        height: 9,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Color(0xFF5D4EF5),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  right: 1,
+                  bottom: 1,
+                  child: Container(
+                    width: 29,
+                    height: 29,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF5D4EF5),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: const Icon(
+                      Icons.camera_alt_rounded,
+                      color: Colors.white,
+                      size: 14,
+                    ),
                   ),
                 ),
               ],
             ),
-          ] else ...[
-            if (user.displayName != null && user.displayName!.isNotEmpty)
-              Center(child: Text(user.displayName!)),
-            if (user.bio != null && user.bio!.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Center(child: Text(user.bio!)),
+          ),
+        ),
+        const SizedBox(height: 17),
+        Center(
+          child: Text(
+            '@${user.username}',
+            style: const TextStyle(
+              fontFamily: 'Poppins',
+              color: Color(0xFF1B1B1B),
+              fontSize: 20,
+              height: 1.2,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.4,
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Center(
+          child: Text(
+            user.email,
+            style: const TextStyle(
+              fontFamily: 'Poppins',
+              color: Color(0xFF8A8A8A),
+              fontSize: 10.5,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+        ),
+        const SizedBox(height: 23),
+        if (_error != null) ...[
+          Text(
+            _error!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontFamily: 'Poppins',
+              color: Color(0xFFD94A5B),
+              fontSize: 11,
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (_isEditing) ...[
+          _ProfileField(
+            controller: _displayNameController,
+            label: 'Display name',
+          ),
+          const SizedBox(height: 13),
+          _ProfileField(
+            controller: _bioController,
+            label: 'Bio',
+            maxLength: 160,
+            maxLines: 3,
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _ProfileButton(
+                  label: 'Cancel',
+                  onTap: _isSavingProfile
+                      ? null
+                      : () => setState(() => _isEditing = false),
+                  filled: false,
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: _ProfileButton(
+                  label: _isSavingProfile ? 'Saving...' : 'Save',
+                  onTap: _isSavingProfile ? null : _saveProfile,
+                  filled: true,
+                ),
+              ),
             ],
-            const SizedBox(height: 16),
-            OutlinedButton(
-              onPressed: () => _startEditing(user),
-              child: const Text('Edit profile'),
+          ),
+        ] else ...[
+          if (user.displayName != null && user.displayName!.isNotEmpty)
+            Center(
+              child: Text(
+                user.displayName!,
+                style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  color: Color(0xFF4B4657),
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          if (user.bio != null && user.bio!.isNotEmpty) ...[
+            const SizedBox(height: 7),
+            Center(
+              child: Text(
+                user.bio!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  color: Color(0xFF8A8A8A),
+                  fontSize: 11,
+                  height: 1.45,
+                ),
+              ),
             ),
           ],
-          const SizedBox(height: 32),
-          const Divider(),
-          const SizedBox(height: 16),
-          const Text('Your posts will appear here'),
+          const SizedBox(height: 17),
+          _ProfileButton(
+            label: 'Edit profile',
+            onTap: () => _startEditing(user),
+            filled: false,
+          ),
         ],
+      ],
+    );
+  }
+}
+
+class _ProfileIconButton extends StatelessWidget {
+  const _ProfileIconButton({required this.onTap, required this.icon});
+
+  final VoidCallback onTap;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 38,
+        height: 38,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+          border: Border.all(color: const Color(0xFF1B1B1B), width: 1),
+        ),
+        child: Icon(icon, color: const Color(0xFF1B1B1B), size: 17),
+      ),
+    );
+  }
+}
+
+class _ProfileField extends StatelessWidget {
+  const _ProfileField({
+    required this.controller,
+    required this.label,
+    this.maxLength,
+    this.maxLines = 1,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final int? maxLength;
+  final int maxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x10332D69),
+            blurRadius: 20,
+            offset: Offset(0, 6),
+          ),
+          BoxShadow(
+            color: Color(0x08332D69),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: controller,
+        maxLength: maxLength,
+        maxLines: maxLines,
+        cursorColor: const Color(0xFF5D4EF5),
+        style: const TextStyle(
+          fontFamily: 'Poppins',
+          color: Color(0xFF1B1B1B),
+          fontSize: 12,
+        ),
+        decoration: InputDecoration(
+          filled: false,
+          labelText: label,
+          labelStyle: const TextStyle(
+            fontFamily: 'Poppins',
+            color: Color(0xFF8A8A8A),
+            fontSize: 11,
+          ),
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 18,
+            vertical: 14,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileButton extends StatelessWidget {
+  const _ProfileButton({
+    required this.label,
+    required this.onTap,
+    required this.filled,
+  });
+
+  final String label;
+  final VoidCallback? onTap;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOutCubic,
+        opacity: onTap == null ? 0.55 : 1,
+        child: Container(
+          height: 48,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: filled ? const Color(0xFF5D4EF5) : Colors.white,
+            borderRadius: BorderRadius.circular(26),
+            border: filled
+                ? null
+                : Border.all(color: const Color(0x335D4EF5), width: 1),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x14332D69),
+                blurRadius: 20,
+                offset: Offset(0, 6),
+              ),
+              BoxShadow(
+                color: Color(0x0A332D69),
+                blurRadius: 8,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              color: filled ? Colors.white : const Color(0xFF5D4EF5),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
       ),
     );
   }

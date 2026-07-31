@@ -10,7 +10,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/theme.dart';
-import 'core/theme_mode_controller.dart';
 import 'router/app_router.dart';
 
 class OurChatApp extends ConsumerStatefulWidget {
@@ -24,13 +23,12 @@ class _OurChatAppState extends ConsumerState<OurChatApp> {
   @override
   Widget build(BuildContext context) {
     final router = ref.watch(goRouterProvider);
-    final themeMode = ref.watch(themeModeProvider);
     return MaterialApp.router(
       title: 'OurChat',
       debugShowCheckedModeBanner: false,
       theme: buildLightTheme(),
       darkTheme: buildDarkTheme(),
-      themeMode: themeMode,
+      themeMode: ThemeMode.light,
       routerConfig: router,
     );
   }

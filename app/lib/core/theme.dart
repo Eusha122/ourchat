@@ -22,10 +22,7 @@ ThemeData buildDarkTheme() {
   final colorScheme = ColorScheme.fromSeed(
     seedColor: _primaryDark,
     brightness: Brightness.dark,
-  ).copyWith(
-    primary: _primaryDark,
-    surface: const Color(0xFF211F2E),
-  );
+  ).copyWith(primary: _primaryDark, surface: const Color(0xFF211F2E));
 
   return _baseTheme(
     colorScheme: colorScheme,
@@ -39,7 +36,11 @@ ThemeData _baseTheme({
   required Color scaffoldBackground,
   required Color cardColor,
 }) {
-  final base = ThemeData(colorScheme: colorScheme, useMaterial3: true);
+  final base = ThemeData(
+    colorScheme: colorScheme,
+    useMaterial3: true,
+    fontFamily: 'Poppins',
+  );
 
   return base.copyWith(
     scaffoldBackgroundColor: scaffoldBackground,
@@ -64,10 +65,7 @@ ThemeData _baseTheme({
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: cardColor,
-      contentPadding: const EdgeInsets.symmetric(
-        horizontal: 20,
-        vertical: 14,
-      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(24),
         borderSide: BorderSide.none,
@@ -91,9 +89,7 @@ ThemeData _baseTheme({
       style: FilledButton.styleFrom(
         backgroundColor: colorScheme.primary,
         foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         padding: const EdgeInsets.symmetric(vertical: 16),
       ),
     ),
@@ -101,9 +97,7 @@ ThemeData _baseTheme({
       style: OutlinedButton.styleFrom(
         foregroundColor: colorScheme.primary,
         side: BorderSide(color: colorScheme.primary.withValues(alpha: 0.4)),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
       ),
     ),
