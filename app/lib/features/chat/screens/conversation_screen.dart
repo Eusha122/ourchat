@@ -1,10 +1,17 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:gal/gal.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../auth/state/auth_controller.dart';
 import '../../posts/data/post_models.dart';
@@ -53,6 +60,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   final _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
   StreamSubscription<ChatMessage>? _messageSub;
+  StreamSubscription<ChatMessage>? _messageUpdateSub;
+  StreamSubscription<MessageRemovedEvent>? _messageRemovedSub;
   StreamSubscription<TypingEvent>? _typingSub;
   Timer? _typingResetTimer;
   bool _isLoading = true;
@@ -70,6 +79,16 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         ?.onMessage
         .where((m) => m.conversationId == widget.conversationId)
         .listen(_onIncomingMessage);
+    _messageUpdateSub = ref
+        .read(socketServiceProvider)
+        ?.onMessageUpdated
+        .where((m) => m.conversationId == widget.conversationId)
+        .listen(_replaceMessage);
+    _messageRemovedSub = ref
+        .read(socketServiceProvider)
+        ?.onMessageRemoved
+        .where((event) => event.conversationId == widget.conversationId)
+        .listen((event) => _removeMessage(event.messageId));
     _typingSub = ref
         .read(socketServiceProvider)
         ?.onTyping
@@ -92,6 +111,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       ref.read(activeConversationIdProvider.notifier).set(null);
     }
     _messageSub?.cancel();
+    _messageUpdateSub?.cancel();
+    _messageRemovedSub?.cancel();
     _typingSub?.cancel();
     _typingResetTimer?.cancel();
     _textController.dispose();
@@ -105,6 +126,54 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     if (message.sender.id == myId) return; // avoid duplicating our own send
     setState(() => _messages.insert(0, message));
     ref.read(conversationsApiProvider).markRead(widget.conversationId);
+  }
+
+  void _replaceMessage(ChatMessage message) {
+    if (!mounted) return;
+    final index = _messages.indexWhere((item) => item.id == message.id);
+    if (index == -1) return;
+    setState(() => _messages[index] = message);
+  }
+
+  void _removeMessage(String messageId) {
+    if (!mounted) return;
+    setState(() => _messages.removeWhere((message) => message.id == messageId));
+  }
+
+  Future<void> _showMessageActions(ChatMessage message, bool isMine) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) =>
+          _MessageActionSheet(canUnsend: isMine && !message.isUnsent),
+    );
+    if (!mounted || action == null) return;
+
+    try {
+      final api = ref.read(conversationsApiProvider);
+      if (action == 'remove') {
+        await api.removeForMe(widget.conversationId, message.id);
+        _removeMessage(message.id);
+      } else if (action == 'unsend') {
+        _replaceMessage(
+          await api.unsendMessage(widget.conversationId, message.id),
+        );
+      } else if (action.startsWith('react:')) {
+        _replaceMessage(
+          await api.reactToMessage(
+            widget.conversationId,
+            message.id,
+            action.substring('react:'.length),
+          ),
+        );
+      }
+    } on ConversationsApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
   }
 
   void _onTyping(TypingEvent event) {
@@ -165,6 +234,58 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     }
   }
 
+  Future<void> _pickAndSendImage(ImageSource source) async {
+    final picked = await ImagePicker().pickImage(
+      source: source,
+      maxWidth: 1600,
+      imageQuality: 85,
+    );
+    if (picked == null) return;
+    await _sendAttachment(
+      filePath: picked.path,
+      fileName: picked.name,
+      isImage: true,
+    );
+  }
+
+  Future<void> _pickAndSendFile() async {
+    final picked = await openFile();
+    if (picked == null) return;
+    await _sendAttachment(
+      filePath: picked.path,
+      fileName: picked.name,
+      isImage: false,
+    );
+  }
+
+  Future<void> _sendAttachment({
+    required String filePath,
+    required String fileName,
+    required bool isImage,
+  }) async {
+    if (_isSending) return;
+    setState(() => _isSending = true);
+    try {
+      final message = await ref
+          .read(conversationsApiProvider)
+          .sendAttachment(
+            widget.conversationId,
+            filePath: filePath,
+            fileName: fileName,
+            isImage: isImage,
+          );
+      if (!mounted) return;
+      setState(() => _messages.insert(0, message));
+    } on ConversationsApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final other = widget.otherParticipant;
@@ -193,6 +314,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 onTypingChanged: (value) => ref
                     .read(socketServiceProvider)
                     ?.sendTyping(widget.conversationId, value.isNotEmpty),
+                onCamera: () => _pickAndSendImage(ImageSource.camera),
+                onPhotos: () => _pickAndSendImage(ImageSource.gallery),
+                onFiles: _pickAndSendFile,
               ),
             ],
           ),
@@ -255,21 +379,47 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       itemBuilder: (context, index) {
         final message = _messages[index];
         final isMine = message.sender.id == myId;
-
-        if (message.type == MessageType.link) {
-          return _Appear(
-            child: Align(
-              alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 5),
-                child: LinkMessageCard(message: message, isMine: isMine),
-              ),
-            ),
-          );
-        }
+        final Widget content = message.isUnsent
+            ? _Bubble(text: 'This message was unsent', mine: isMine)
+            : switch (message.type) {
+                MessageType.link => Align(
+                  alignment: isMine
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: LinkMessageCard(message: message, isMine: isMine),
+                  ),
+                ),
+                MessageType.image => _ImageBubble(
+                  message: message,
+                  mine: isMine,
+                ),
+                MessageType.file => _FileBubble(message: message, mine: isMine),
+                MessageType.text => _Bubble(
+                  text: message.text ?? '',
+                  mine: isMine,
+                ),
+              };
 
         return _Appear(
-          child: _Bubble(text: message.text ?? '', mine: isMine),
+          child: _MessageActionTarget(
+            onLongPress: () => _showMessageActions(message, isMine),
+            child: Column(
+              crossAxisAlignment: isMine
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
+              children: [
+                content,
+                if (!message.isUnsent && message.reactions.isNotEmpty)
+                  _MessageReactionStrip(
+                    reactions: message.reactions,
+                    mine: isMine,
+                    currentUserId: myId,
+                  ),
+              ],
+            ),
+          ),
         );
       },
     );
@@ -342,7 +492,8 @@ class _NoisePainter extends CustomPainter {
     // Fixed seed keeps the grain stable between frames.
     final random = math.Random(7);
     final light = Paint()..color = Colors.white.withValues(alpha: 0.030);
-    final dark = Paint()..color = const Color(0xFF1B1240).withValues(alpha: 0.030);
+    final dark = Paint()
+      ..color = const Color(0xFF1B1240).withValues(alpha: 0.030);
 
     for (var i = 0; i < 900; i++) {
       final dx = random.nextDouble() * size.width;
@@ -489,12 +640,16 @@ class _ConversationHeader extends StatelessWidget {
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF2B2468).withValues(alpha: 0.16),
+                          color: const Color(
+                            0xFF2B2468,
+                          ).withValues(alpha: 0.16),
                           blurRadius: 16,
                           offset: const Offset(0, 6),
                         ),
                         BoxShadow(
-                          color: const Color(0xFF2B2468).withValues(alpha: 0.06),
+                          color: const Color(
+                            0xFF2B2468,
+                          ).withValues(alpha: 0.06),
                           blurRadius: 5,
                           offset: const Offset(0, 2),
                         ),
@@ -635,6 +790,195 @@ class _OutlineCircleButtonState extends State<_OutlineCircleButton> {
 // ─────────────────────────────────────────────────────────────
 
 /// Fade + rise + settle as a bubble enters the list.
+class _MessageActionTarget extends StatelessWidget {
+  const _MessageActionTarget({required this.child, required this.onLongPress});
+
+  final Widget child;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    behavior: HitTestBehavior.deferToChild,
+    onLongPress: onLongPress,
+    child: child,
+  );
+}
+
+class _MessageReactionStrip extends StatelessWidget {
+  const _MessageReactionStrip({
+    required this.reactions,
+    required this.mine,
+    required this.currentUserId,
+  });
+
+  final List<MessageReaction> reactions;
+  final bool mine;
+  final String? currentUserId;
+
+  @override
+  Widget build(BuildContext context) {
+    final counts = <String, int>{};
+    final reactedByMe = <String>{};
+    for (final reaction in reactions) {
+      counts.update(reaction.emoji, (count) => count + 1, ifAbsent: () => 1);
+      if (reaction.userId == currentUserId) reactedByMe.add(reaction.emoji);
+    }
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: mine ? 0 : 5,
+        right: mine ? 5 : 0,
+        bottom: 4,
+      ),
+      child: Wrap(
+        spacing: 5,
+        children: counts.entries
+            .map((entry) {
+              final selected = reactedByMe.contains(entry.key);
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? const Color(0xFFE9E5FF)
+                      : Colors.white.withValues(alpha: 0.19),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: selected
+                        ? const Color(0xFFB9B0FF)
+                        : Colors.white.withValues(alpha: 0.30),
+                  ),
+                ),
+                child: Text(
+                  '${entry.key} ${entry.value}',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 10.5,
+                    height: 1,
+                    fontWeight: FontWeight.w600,
+                    color: selected ? _purple : Colors.white,
+                  ),
+                ),
+              );
+            })
+            .toList(growable: false),
+      ),
+    );
+  }
+}
+
+class _MessageActionSheet extends StatelessWidget {
+  const _MessageActionSheet({required this.canUnsend});
+
+  final bool canUnsend;
+  static const _reactions = ['❤️', '👍', '😂', '😮', '😢'];
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFDFDFF),
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF17103E).withValues(alpha: 0.20),
+              blurRadius: 40,
+              offset: const Offset(0, 16),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: _reactions
+                  .map(
+                    (emoji) => _ReactionButton(
+                      emoji: emoji,
+                      onTap: () => Navigator.of(context).pop('react:$emoji'),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+            const SizedBox(height: 12),
+            _SheetAction(
+              icon: Icons.visibility_off_outlined,
+              label: 'Remove for me',
+              onTap: () => Navigator.of(context).pop('remove'),
+            ),
+            if (canUnsend)
+              _SheetAction(
+                icon: Icons.undo_rounded,
+                label: 'Unsend',
+                danger: true,
+                onTap: () => Navigator.of(context).pop('unsend'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReactionButton extends StatelessWidget {
+  const _ReactionButton({required this.emoji, required this.onTap});
+
+  final String emoji;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    borderRadius: BorderRadius.circular(18),
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.all(8),
+      child: Text(emoji, style: const TextStyle(fontSize: 24)),
+    ),
+  );
+}
+
+class _SheetAction extends StatelessWidget {
+  const _SheetAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.danger = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    borderRadius: BorderRadius.circular(16),
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 13),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: danger ? const Color(0xFFD94040) : _ink),
+          const SizedBox(width: 13),
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: danger ? const Color(0xFFD94040) : _ink,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _Appear extends StatelessWidget {
   const _Appear({required this.child});
 
@@ -765,6 +1109,291 @@ class _Bubble extends StatelessWidget {
   }
 }
 
+/// An uploaded photo, shown as a rounded thumbnail. Tapping keeps the user
+/// inside OurChat and opens a full-screen, zoomable viewer.
+class _ImageBubble extends StatelessWidget {
+  const _ImageBubble({required this.message, required this.mine});
+
+  final ChatMessage message;
+  final bool mine;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = message.linkImageUrl;
+    final maxWidth = MediaQuery.sizeOf(context).width * 0.6;
+
+    return Align(
+      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: GestureDetector(
+        onTap: url == null
+            ? null
+            : () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => _ImageViewerScreen(imageUrl: url),
+                ),
+              ),
+        child: Container(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          margin: const EdgeInsets.symmetric(vertical: 5),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF1C1250).withValues(alpha: 0.20),
+                blurRadius: 40,
+                offset: const Offset(0, 16),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: url == null
+                ? const SizedBox(
+                    width: 160,
+                    height: 160,
+                    child: ColoredBox(color: Color(0xFFEDEBFF)),
+                  )
+                : CachedNetworkImage(
+                    imageUrl: url,
+                    fit: BoxFit.cover,
+                    placeholder: (_, _) => const SizedBox(
+                      width: 160,
+                      height: 160,
+                      child: ColoredBox(color: Color(0xFFEDEBFF)),
+                    ),
+                    errorWidget: (_, _, _) => const SizedBox(
+                      width: 160,
+                      height: 160,
+                      child: ColoredBox(color: Color(0xFFEDEBFF)),
+                    ),
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-screen in-app photo viewer (pinch-to-zoom) with a save-to-device
+/// action — tapping a photo bubble opens this instead of handing the image
+/// off to an external browser/viewer.
+class _ImageViewerScreen extends StatefulWidget {
+  const _ImageViewerScreen({required this.imageUrl});
+
+  final String imageUrl;
+
+  @override
+  State<_ImageViewerScreen> createState() => _ImageViewerScreenState();
+}
+
+class _ImageViewerScreenState extends State<_ImageViewerScreen> {
+  bool _saving = false;
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final file = await DefaultCacheManager().getSingleFile(widget.imageUrl);
+      if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+        await Gal.putImage(file.path, album: 'OurChat');
+      } else {
+        final location = await getSaveLocation(
+          suggestedName: file.uri.pathSegments.last,
+        );
+        if (location == null) return; // user cancelled the save dialog
+        await file.copy(location.path);
+      }
+      if (mounted) {
+        messenger.showSnackBar(const SnackBar(content: Text('Saved')));
+      }
+    } catch (_) {
+      if (mounted) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Could not save the image')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          IconButton(
+            tooltip: 'Save picture',
+            icon: _saving
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.download_rounded),
+            onPressed: _save,
+          ),
+        ],
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          minScale: 0.8,
+          maxScale: 4,
+          child: CachedNetworkImage(
+            imageUrl: widget.imageUrl,
+            fit: BoxFit.contain,
+          ),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+          child: FilledButton.icon(
+            onPressed: _saving ? null : _save,
+            icon: _saving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.download_rounded),
+            label: Text(_saving ? 'Saving…' : 'Save picture'),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// An uploaded arbitrary file — a bubble with a file-type icon, name and
+/// human-readable size. Tapping downloads/opens it externally.
+class _FileBubble extends StatelessWidget {
+  const _FileBubble({required this.message, required this.mine});
+
+  final ChatMessage message;
+  final bool mine;
+
+  String get _sizeLabel {
+    final bytes = message.fileSize;
+    if (bytes == null) return '';
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final maxWidth = MediaQuery.sizeOf(context).width * 0.74;
+    const radius = BorderRadius.all(Radius.circular(22));
+    final url = message.linkUrl;
+
+    final content = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: mine
+                ? const Color(0xFFEFECFF)
+                : Colors.white.withValues(alpha: 0.22),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            Icons.insert_drive_file_rounded,
+            size: 19,
+            color: mine ? _purple : Colors.white,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                message.linkTitle ?? 'File',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  color: mine ? const Color(0xFF241F3D) : Colors.white,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (_sizeLabel.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  _sizeLabel,
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    color: mine ? _muted : Colors.white.withValues(alpha: 0.75),
+                    fontSize: 10.5,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+
+    return Align(
+      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: GestureDetector(
+        onTap: url == null
+            ? null
+            : () => launchUrl(
+                Uri.parse(url),
+                mode: LaunchMode.externalApplication,
+              ),
+        child: Container(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          margin: const EdgeInsets.symmetric(vertical: 5),
+          padding: const EdgeInsets.fromLTRB(14, 12, 18, 12),
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            gradient: mine
+                ? const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFFFFFFFF), Color(0xFFF6F5FF)],
+                  )
+                : null,
+            color: mine ? null : Colors.white.withValues(alpha: 0.14),
+            border: mine
+                ? null
+                : Border.all(color: Colors.white.withValues(alpha: 0.22)),
+            boxShadow: mine
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFF1E1550).withValues(alpha: 0.18),
+                      blurRadius: 40,
+                      offset: const Offset(0, 16),
+                    ),
+                  ]
+                : null,
+          ),
+          child: content,
+        ),
+      ),
+    );
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 // Composer
 // ─────────────────────────────────────────────────────────────
@@ -775,12 +1404,18 @@ class _Composer extends StatefulWidget {
     required this.isSending,
     required this.onSend,
     required this.onTypingChanged,
+    required this.onCamera,
+    required this.onPhotos,
+    required this.onFiles,
   });
 
   final TextEditingController controller;
   final bool isSending;
   final VoidCallback onSend;
   final ValueChanged<String> onTypingChanged;
+  final VoidCallback onCamera;
+  final VoidCallback onPhotos;
+  final VoidCallback onFiles;
 
   @override
   State<_Composer> createState() => _ComposerState();
@@ -833,8 +1468,9 @@ class _ComposerState extends State<_Composer> {
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: const Color(0xFF1E1550)
-                          .withValues(alpha: _focused ? 0.22 : 0.16),
+                      color: const Color(
+                        0xFF1E1550,
+                      ).withValues(alpha: _focused ? 0.22 : 0.16),
                       blurRadius: 50,
                       offset: const Offset(0, 18),
                     ),
@@ -910,7 +1546,12 @@ class _ComposerState extends State<_Composer> {
                     ),
                     GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onTap: () => _showComingSoon(context, 'Attachments'),
+                      onTap: () => showAttachmentSheet(
+                        context,
+                        onCamera: widget.onCamera,
+                        onPhotos: widget.onPhotos,
+                        onFiles: widget.onFiles,
+                      ),
                       child: const SizedBox(
                         width: 48,
                         height: 64,
@@ -929,6 +1570,214 @@ class _ComposerState extends State<_Composer> {
             ),
             const SizedBox(width: 12),
             _SendButton(isSending: widget.isSending, onPressed: widget.onSend),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Attachment sheet
+// ─────────────────────────────────────────────────────────────
+
+/// Bottom sheet offering Camera / Photos / Files, with a hand-tuned
+/// slide+fade entrance (built on showGeneralDialog rather than the stock
+/// modal bottom sheet, for full control over the curve) and a spring-back
+/// press animation on each option.
+Future<void> showAttachmentSheet(
+  BuildContext context, {
+  required VoidCallback onCamera,
+  required VoidCallback onPhotos,
+  required VoidCallback onFiles,
+}) {
+  return showGeneralDialog<void>(
+    context: context,
+    barrierLabel: 'Attach',
+    barrierDismissible: true,
+    barrierColor: Colors.black.withValues(alpha: 0.38),
+    transitionDuration: const Duration(milliseconds: 380),
+    pageBuilder: (context, animation, secondaryAnimation) {
+      return _AttachmentSheet(
+        onCamera: onCamera,
+        onPhotos: onPhotos,
+        onFiles: onFiles,
+      );
+    },
+    transitionBuilder: (context, animation, secondaryAnimation, child) {
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      );
+      return SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 1),
+          end: Offset.zero,
+        ).animate(curved),
+        child: FadeTransition(opacity: curved, child: child),
+      );
+    },
+  );
+}
+
+class _AttachmentSheet extends StatelessWidget {
+  const _AttachmentSheet({
+    required this.onCamera,
+    required this.onPhotos,
+    required this.onFiles,
+  });
+
+  final VoidCallback onCamera;
+  final VoidCallback onPhotos;
+  final VoidCallback onFiles;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Material(
+        color: Colors.transparent,
+        child: SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            padding: const EdgeInsets.fromLTRB(8, 22, 8, 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(32),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF1E1550).withValues(alpha: 0.28),
+                  blurRadius: 50,
+                  offset: const Offset(0, 20),
+                ),
+                BoxShadow(
+                  color: const Color(0xFF1E1550).withValues(alpha: 0.14),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 38,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE7E4F5),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 22),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _AttachmentOption(
+                        icon: Icons.camera_alt_rounded,
+                        label: 'Camera',
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          onCamera();
+                        },
+                      ),
+                      _AttachmentOption(
+                        icon: Icons.photo_library_rounded,
+                        label: 'Photos',
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          onPhotos();
+                        },
+                      ),
+                      _AttachmentOption(
+                        icon: Icons.insert_drive_file_rounded,
+                        label: 'Files',
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          onFiles();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AttachmentOption extends StatefulWidget {
+  const _AttachmentOption({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  State<_AttachmentOption> createState() => _AttachmentOptionState();
+}
+
+class _AttachmentOptionState extends State<_AttachmentOption> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTap: widget.onTap,
+      child: AnimatedScale(
+        scale: _pressed ? 0.90 : 1,
+        duration: _pressed
+            ? const Duration(milliseconds: 110)
+            : const Duration(milliseconds: 320),
+        curve: _pressed ? Curves.easeOut : Curves.elasticOut,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF8B7DFF), Color(0xFF5D4EF5)],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: _purple.withValues(alpha: 0.32),
+                    blurRadius: 18,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Icon(widget.icon, color: Colors.white, size: 24),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              widget.label,
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                color: _ink,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ],
         ),
       ),
@@ -987,14 +1836,16 @@ class _SendButtonState extends State<_SendButton> {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF3A2BC9)
-                      .withValues(alpha: _pressed ? 0.28 : 0.46),
+                  color: const Color(
+                    0xFF3A2BC9,
+                  ).withValues(alpha: _pressed ? 0.28 : 0.46),
                   blurRadius: _pressed ? 18 : 30,
                   offset: Offset(0, _pressed ? 7 : 16),
                 ),
                 BoxShadow(
-                  color: const Color(0xFF1E1550)
-                      .withValues(alpha: _pressed ? 0.10 : 0.18),
+                  color: const Color(
+                    0xFF1E1550,
+                  ).withValues(alpha: _pressed ? 0.10 : 0.18),
                   blurRadius: 14,
                   offset: const Offset(0, 5),
                 ),

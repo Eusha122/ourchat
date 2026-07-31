@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../features/auth/screens/login_screen.dart';
 import '../features/auth/screens/register_screen.dart';
 import '../features/auth/state/auth_controller.dart';
-import '../features/chat/screens/conversation_screen.dart';
+import '../features/chat/screens/conversation_entry_screen.dart';
 import '../features/chats/chats_screen.dart';
 import '../features/feed/feed_screen.dart';
 import '../features/posts/data/post_models.dart';
@@ -85,10 +85,15 @@ final goRouterProvider = Provider<GoRouter>((ref) {
                 routes: [
                   GoRoute(
                     path: ':conversationId',
-                    builder: (context, state) => ConversationScreen(
-                      conversationId: state.pathParameters['conversationId']!,
-                      otherParticipant: state.extra as PostAuthor,
-                    ),
+                    builder: (context, state) {
+                      final extra = state.extra;
+                      return ConversationEntryScreen(
+                        conversationId: state.pathParameters['conversationId']!,
+                        initialOtherParticipant: extra is PostAuthor
+                            ? extra
+                            : null,
+                      );
+                    },
                   ),
                 ],
               ),

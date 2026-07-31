@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/global_message_listener.dart';
+import 'core/notification_service.dart';
 import 'core/theme.dart';
 import 'router/app_router.dart';
 
@@ -22,6 +23,16 @@ class OurChatApp extends ConsumerStatefulWidget {
 
 class _OurChatAppState extends ConsumerState<OurChatApp> {
   final _scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+
+  @override
+  void initState() {
+    super.initState();
+    // The Android permission dialog needs a resumed Activity, which isn't
+    // guaranteed yet during main() — ask once the first frame is up.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NotificationService().requestPermission();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

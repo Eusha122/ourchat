@@ -66,7 +66,10 @@ export function toPublicComment(comment: CommentWithAuthor) {
 }
 
 type MessageWithSender = Prisma.MessageGetPayload<{
-  include: { sender: { select: typeof postAuthorSelect } };
+  include: {
+    sender: { select: typeof postAuthorSelect };
+    reactions: { select: { userId: true; emoji: true } };
+  };
 }>;
 
 export function toPublicMessage(message: MessageWithSender) {
@@ -78,6 +81,9 @@ export function toPublicMessage(message: MessageWithSender) {
     linkUrl: message.linkUrl,
     linkTitle: message.linkTitle,
     linkImageUrl: message.linkImageUrl,
+    fileSize: message.fileSize,
+    isUnsent: message.unsentAt !== null,
+    reactions: message.reactions,
     createdAt: message.createdAt,
     sender: message.sender,
   };

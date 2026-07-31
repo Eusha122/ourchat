@@ -44,19 +44,30 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
   void _onMessage(ChatMessage message) {
     final myId = ref.read(authControllerProvider).value?.user?.id;
     if (message.sender.id == myId) return; // our own echoed message
-    if (ref.read(activeConversationIdProvider) == message.conversationId) {
-      return; // already looking at this chat
-    }
 
     final sender = message.sender;
     final name = sender.displayName?.isNotEmpty == true
         ? sender.displayName!
         : '@${sender.username}';
-    final preview = message.text?.isNotEmpty == true
+    final preview = message.isUnsent
+        ? 'Unsent a message'
+        : message.text?.isNotEmpty == true
         ? message.text!
-        : (message.type == MessageType.link ? 'Sent a link' : 'Sent a message');
+        : switch (message.type) {
+            MessageType.image => 'Sent a photo',
+            MessageType.file => 'Sent a file',
+            MessageType.link => 'Sent a link',
+            MessageType.text => 'Sent a message',
+          };
 
+    // Always create the OS notification. In particular, this covers the
+    // common test case where the same conversation is open on the phone.
+    // The in-app banner remains suppressed there because the message is
+    // already visible in the thread.
     NotificationService().showMessageNotification(title: name, body: preview);
+    if (ref.read(activeConversationIdProvider) == message.conversationId) {
+      return; // already looking at this chat
+    }
 
     widget.scaffoldMessengerKey.currentState
       ?..hideCurrentSnackBar()
@@ -105,13 +116,11 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
             label: 'Open',
             textColor: const Color(0xFF9E93FF),
             onPressed: () {
-              final rootContext =
-                  widget.scaffoldMessengerKey.currentContext;
+              final rootContext = widget.scaffoldMessengerKey.currentContext;
               if (rootContext != null) {
-                GoRouter.of(rootContext).push(
-                  '/chats/${message.conversationId}',
-                  extra: sender,
-                );
+                GoRouter.of(
+                  rootContext,
+                ).push('/chats/${message.conversationId}', extra: sender);
               }
             },
           ),

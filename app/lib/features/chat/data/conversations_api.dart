@@ -22,7 +22,9 @@ class ConversationsApi {
         data: {'username': username},
       );
       final data = response.data as Map<String, dynamic>;
-      return Conversation.fromJson(data['conversation'] as Map<String, dynamic>);
+      return Conversation.fromJson(
+        data['conversation'] as Map<String, dynamic>,
+      );
     });
   }
 
@@ -36,6 +38,16 @@ class ConversationsApi {
     });
   }
 
+  Future<Conversation> fetchConversation(String conversationId) async {
+    return _handle(() async {
+      final response = await _dio.get('/conversations/$conversationId');
+      final data = response.data as Map<String, dynamic>;
+      return Conversation.fromJson(
+        data['conversation'] as Map<String, dynamic>,
+      );
+    });
+  }
+
   Future<MessagesPage> fetchMessages(
     String conversationId, {
     String? cursor,
@@ -44,10 +56,7 @@ class ConversationsApi {
     return _handle(() async {
       final response = await _dio.get(
         '/conversations/$conversationId/messages',
-        queryParameters: {
-          'cursor': ?cursor,
-          'take': take,
-        },
+        queryParameters: {'cursor': ?cursor, 'take': take},
       );
       return MessagesPage.fromJson(response.data as Map<String, dynamic>);
     });
@@ -75,9 +84,68 @@ class ConversationsApi {
     });
   }
 
+  /// Uploads an image or arbitrary file and sends it as a chat message in one
+  /// call. [isImage] picks the message type (IMAGE vs FILE) the backend
+  /// stores it under.
+  Future<ChatMessage> sendAttachment(
+    String conversationId, {
+    required String filePath,
+    required String fileName,
+    required bool isImage,
+  }) async {
+    return _handle(() async {
+      final form = FormData.fromMap({
+        'type': isImage ? 'IMAGE' : 'FILE',
+        'file': await MultipartFile.fromFile(filePath, filename: fileName),
+      });
+      final response = await _dio.post(
+        '/conversations/$conversationId/messages',
+        data: form,
+      );
+      final data = response.data as Map<String, dynamic>;
+      return ChatMessage.fromJson(data['message'] as Map<String, dynamic>);
+    });
+  }
+
   Future<void> markRead(String conversationId) async {
     return _handle(() async {
       await _dio.post('/conversations/$conversationId/read');
+    });
+  }
+
+  Future<void> removeForMe(String conversationId, String messageId) async {
+    return _handle(() async {
+      await _dio.post(
+        '/conversations/$conversationId/messages/$messageId/hide',
+      );
+    });
+  }
+
+  Future<ChatMessage> unsendMessage(
+    String conversationId,
+    String messageId,
+  ) async {
+    return _handle(() async {
+      final response = await _dio.post(
+        '/conversations/$conversationId/messages/$messageId/unsend',
+      );
+      final data = response.data as Map<String, dynamic>;
+      return ChatMessage.fromJson(data['message'] as Map<String, dynamic>);
+    });
+  }
+
+  Future<ChatMessage> reactToMessage(
+    String conversationId,
+    String messageId,
+    String emoji,
+  ) async {
+    return _handle(() async {
+      final response = await _dio.post(
+        '/conversations/$conversationId/messages/$messageId/reactions',
+        data: {'emoji': emoji},
+      );
+      final data = response.data as Map<String, dynamic>;
+      return ChatMessage.fromJson(data['message'] as Map<String, dynamic>);
     });
   }
 
@@ -89,7 +157,9 @@ class ConversationsApi {
       if (data is Map && data['error'] != null) {
         final error = data['error'];
         if (error is String) throw ConversationsApiException(error);
-        throw ConversationsApiException('Please check your input and try again.');
+        throw ConversationsApiException(
+          'Please check your input and try again.',
+        );
       }
       throw ConversationsApiException(
         'Could not reach the server. Check your connection and try again.',

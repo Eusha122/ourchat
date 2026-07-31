@@ -6,13 +6,18 @@ export const startConversationSchema = z.object({
 
 export const sendMessageSchema = z
   .object({
-    type: z.enum(["TEXT", "LINK"]).default("TEXT"),
+    type: z.enum(["TEXT", "LINK", "IMAGE", "FILE"]).default("TEXT"),
     text: z.string().min(1).max(4000).optional(),
     linkUrl: z.string().url().optional(),
   })
   .refine(
-    (data) =>
-      data.type === "TEXT" ? Boolean(data.text) : Boolean(data.linkUrl),
+    (data) => {
+      if (data.type === "TEXT") return Boolean(data.text);
+      if (data.type === "LINK") return Boolean(data.linkUrl);
+      // IMAGE/FILE arrive as multipart uploads — the file itself is
+      // validated separately once multer has parsed it.
+      return true;
+    },
     {
       message:
         "text is required for TEXT messages, linkUrl is required for LINK messages",

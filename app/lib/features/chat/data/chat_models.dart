@@ -2,10 +2,16 @@ import '../../posts/data/post_models.dart';
 
 enum MessageType {
   text,
-  link;
+  link,
+  image,
+  file;
 
-  static MessageType fromJson(String value) =>
-      value == 'LINK' ? MessageType.link : MessageType.text;
+  static MessageType fromJson(String value) => switch (value) {
+    'LINK' => MessageType.link,
+    'IMAGE' => MessageType.image,
+    'FILE' => MessageType.file,
+    _ => MessageType.text,
+  };
 }
 
 class LastMessage {
@@ -82,6 +88,9 @@ class ChatMessage {
     required this.linkUrl,
     required this.linkTitle,
     required this.linkImageUrl,
+    required this.fileSize,
+    required this.isUnsent,
+    required this.reactions,
     required this.createdAt,
     required this.sender,
   });
@@ -95,6 +104,11 @@ class ChatMessage {
       linkUrl: json['linkUrl'] as String?,
       linkTitle: json['linkTitle'] as String?,
       linkImageUrl: json['linkImageUrl'] as String?,
+      fileSize: json['fileSize'] as int?,
+      isUnsent: json['isUnsent'] as bool? ?? false,
+      reactions: (json['reactions'] as List? ?? const [])
+          .map((item) => MessageReaction.fromJson(item as Map<String, dynamic>))
+          .toList(growable: false),
       createdAt: DateTime.parse(json['createdAt'] as String),
       sender: PostAuthor.fromJson(json['sender'] as Map<String, dynamic>),
     );
@@ -107,8 +121,66 @@ class ChatMessage {
   final String? linkUrl;
   final String? linkTitle;
   final String? linkImageUrl;
+  final int? fileSize;
+  final bool isUnsent;
+  final List<MessageReaction> reactions;
   final DateTime createdAt;
   final PostAuthor sender;
+
+  ChatMessage copyWith({
+    MessageType? type,
+    String? text,
+    String? linkUrl,
+    String? linkTitle,
+    String? linkImageUrl,
+    int? fileSize,
+    bool? isUnsent,
+    List<MessageReaction>? reactions,
+  }) {
+    return ChatMessage(
+      id: id,
+      conversationId: conversationId,
+      type: type ?? this.type,
+      text: text ?? this.text,
+      linkUrl: linkUrl ?? this.linkUrl,
+      linkTitle: linkTitle ?? this.linkTitle,
+      linkImageUrl: linkImageUrl ?? this.linkImageUrl,
+      fileSize: fileSize ?? this.fileSize,
+      isUnsent: isUnsent ?? this.isUnsent,
+      reactions: reactions ?? this.reactions,
+      createdAt: createdAt,
+      sender: sender,
+    );
+  }
+}
+
+class MessageReaction {
+  const MessageReaction({required this.userId, required this.emoji});
+
+  factory MessageReaction.fromJson(Map<String, dynamic> json) =>
+      MessageReaction(
+        userId: json['userId'] as String,
+        emoji: json['emoji'] as String,
+      );
+
+  final String userId;
+  final String emoji;
+}
+
+class MessageRemovedEvent {
+  const MessageRemovedEvent({
+    required this.conversationId,
+    required this.messageId,
+  });
+
+  factory MessageRemovedEvent.fromJson(Map<String, dynamic> json) =>
+      MessageRemovedEvent(
+        conversationId: json['conversationId'] as String,
+        messageId: json['messageId'] as String,
+      );
+
+  final String conversationId;
+  final String messageId;
 }
 
 class MessagesPage {

@@ -1,3 +1,4 @@
+import path from "path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { prisma } from "./prisma";
@@ -10,6 +11,10 @@ export const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+// Serves locally-stored chat attachments when R2 isn't configured (see
+// lib/storage.ts) — a no-op path is still hit but empty if R2 is in use.
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 app.use("/auth", authRouter);
 app.use("/users", usersRouter);

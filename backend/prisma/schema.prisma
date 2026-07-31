@@ -28,6 +28,8 @@ model User {
   comments     Comment[]
   participants ConversationParticipant[]
   messages     Message[]
+  messageHides MessageHide[]
+  messageReactions MessageReaction[]
 }
 
 model Post {
@@ -89,6 +91,8 @@ model ConversationParticipant {
 enum MessageType {
   TEXT
   LINK
+  IMAGE
+  FILE
 }
 
 model Message {
@@ -99,10 +103,48 @@ model Message {
   sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
   type           MessageType  @default(TEXT)
   text           String?
+  // LINK: linkUrl is the shared external URL, linkTitle/linkImageUrl are the
+  // fetched oEmbed-style preview.
+  // IMAGE: linkImageUrl holds the uploaded image's URL.
+  // FILE: linkUrl holds the uploaded file's URL, linkTitle its original
+  // filename, fileSize its size in bytes.
   linkUrl        String?
   linkTitle      String?
   linkImageUrl   String?
+  fileSize       Int?
+  unsentAt       DateTime?
   createdAt      DateTime     @default(now())
 
+  hiddenBy       MessageHide[]
+  reactions      MessageReaction[]
+
   @@index([conversationId, createdAt])
+}
+
+/// A personal hide is account-wide: a message removed "for me" stays hidden
+/// after refreshing or opening the same account on another device.
+model MessageHide {
+  id        String   @id @default(uuid())
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([messageId, userId])
+  @@index([userId])
+}
+
+model MessageReaction {
+  id        String   @id @default(uuid())
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emoji     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([messageId, userId])
+  @@index([messageId])
 }

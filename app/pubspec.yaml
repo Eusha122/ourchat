@@ -44,6 +44,10 @@ dependencies:
   url_launcher: ^6.3.2
   just_audio: ^0.9.36
   flutter_local_notifications: ^18.0.1
+  file_selector: ^1.0.3
+  gal: ^2.3.0
+  flutter_cache_manager: ^3.4.1
+  flutter_webrtc: ^1.5.2
   # receive_sharing_intent: ^1.9.0 # disabled temporarily - see app.dart TODO
 
 dev_dependencies:

@@ -1,8 +1,10 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../prisma";
+import { chatAttachmentUpload } from "../lib/attachmentUpload";
 import { fetchLinkMetadata } from "../lib/linkMetadata";
 import { postAuthorSelect, toPublicMessage } from "../lib/serializers";
+import { uploadFile } from "../lib/storage";
 import { getIO } from "../socket";
 import {
   messagesQuerySchema,
@@ -16,6 +18,25 @@ async function requireParticipant(conversationId: string, userId: string) {
   return prisma.conversationParticipant.findUnique({
     where: { conversationId_userId: { conversationId, userId } },
   });
+}
+
+const messageInclude = {
+  sender: { select: postAuthorSelect },
+  reactions: { select: { userId: true, emoji: true } },
+} as const;
+
+async function emitMessageUpdated(
+  conversationId: string,
+  message: Parameters<typeof toPublicMessage>[0],
+) {
+  const participants = await prisma.conversationParticipant.findMany({
+    where: { conversationId },
+    select: { userId: true },
+  });
+  getIO()
+    .to(`conversation:${conversationId}`)
+    .to(participants.map(({ userId }) => `user:${userId}`))
+    .emit("message:updated", toPublicMessage(message));
 }
 
 conversationsRouter.post("/", requireAuth, async (req, res) => {
@@ -87,7 +108,11 @@ conversationsRouter.get("/", requireAuth, async (req, res) => {
       conversation: {
         include: {
           participants: { include: { user: { select: postAuthorSelect } } },
-          messages: { orderBy: { createdAt: "desc" }, take: 1 },
+          messages: {
+            where: { hiddenBy: { none: { userId: req.userId } } },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
         },
       },
     },
@@ -103,6 +128,8 @@ conversationsRouter.get("/", requireAuth, async (req, res) => {
         where: {
           conversationId: p.conversationId,
           senderId: { not: req.userId },
+          unsentAt: null,
+          hiddenBy: { none: { userId: req.userId } },
           ...(p.lastReadAt ? { createdAt: { gt: p.lastReadAt } } : {}),
         },
       });
@@ -132,6 +159,67 @@ conversationsRouter.get("/", requireAuth, async (req, res) => {
   res.json({ conversations: results });
 });
 
+conversationsRouter.get("/:conversationId", requireAuth, async (req, res) => {
+  const conversationId = req.params.conversationId as string;
+  const participant = await prisma.conversationParticipant.findUnique({
+    where: { conversationId_userId: { conversationId, userId: req.userId! } },
+    include: {
+      conversation: {
+        include: {
+          participants: { include: { user: { select: postAuthorSelect } } },
+          messages: {
+            where: { hiddenBy: { none: { userId: req.userId } } },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+
+  if (!participant) {
+    res.status(404).json({ error: "Conversation not found" });
+    return;
+  }
+
+  const other = participant.conversation.participants.find(
+    (pt) => pt.userId !== req.userId,
+  )?.user;
+  if (!other) {
+    res.status(404).json({ error: "Conversation participant not found" });
+    return;
+  }
+
+  const lastMessage = participant.conversation.messages[0] ?? null;
+  const unreadCount = await prisma.message.count({
+    where: {
+      conversationId,
+      senderId: { not: req.userId },
+      unsentAt: null,
+      hiddenBy: { none: { userId: req.userId } },
+      ...(participant.lastReadAt
+        ? { createdAt: { gt: participant.lastReadAt } }
+        : {}),
+    },
+  });
+
+  res.json({
+    conversation: {
+      id: conversationId,
+      otherParticipant: other,
+      lastMessage: lastMessage
+        ? {
+            id: lastMessage.id,
+            text: lastMessage.text,
+            senderId: lastMessage.senderId,
+            createdAt: lastMessage.createdAt,
+          }
+        : null,
+      unreadCount,
+    },
+  });
+});
+
 conversationsRouter.get("/:conversationId/messages", requireAuth, async (req, res) => {
   const conversationId = req.params.conversationId as string;
   const participant = await requireParticipant(conversationId, req.userId!);
@@ -150,11 +238,14 @@ conversationsRouter.get("/:conversationId/messages", requireAuth, async (req, re
   const { cursor } = parsed.data;
 
   const messages = await prisma.message.findMany({
-    where: { conversationId },
+    where: {
+      conversationId,
+      hiddenBy: { none: { userId: req.userId } },
+    },
     take: take + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    include: { sender: { select: postAuthorSelect } },
+    include: messageInclude,
   });
 
   const hasMore = messages.length > take;
@@ -164,7 +255,7 @@ conversationsRouter.get("/:conversationId/messages", requireAuth, async (req, re
   res.json({ messages: messages.map(toPublicMessage), nextCursor });
 });
 
-conversationsRouter.post("/:conversationId/messages", requireAuth, async (req, res) => {
+async function handleSendMessage(req: Request, res: Response) {
   const conversationId = req.params.conversationId as string;
   const participant = await requireParticipant(conversationId, req.userId!);
   if (!participant) {
@@ -178,12 +269,39 @@ conversationsRouter.post("/:conversationId/messages", requireAuth, async (req, r
     return;
   }
 
+  let linkUrl: string | null = parsed.data.linkUrl ?? null;
   let linkTitle: string | null = null;
   let linkImageUrl: string | null = null;
+  let fileSize: number | null = null;
+
   if (parsed.data.type === "LINK") {
     const metadata = await fetchLinkMetadata(parsed.data.linkUrl!);
     linkTitle = metadata.title;
     linkImageUrl = metadata.imageUrl;
+  } else if (parsed.data.type === "IMAGE" || parsed.data.type === "FILE") {
+    if (!req.file) {
+      res.status(400).json({ error: "No file uploaded" });
+      return;
+    }
+    const originalName = req.file.originalname || "file";
+    const dotIndex = originalName.lastIndexOf(".");
+    const extension = dotIndex >= 0 ? originalName.slice(dotIndex + 1) : "bin";
+    const publicOrigin = `${req.protocol}://${req.get("host")}`;
+    const uploadedUrl = await uploadFile({
+      buffer: req.file.buffer,
+      contentType: req.file.mimetype,
+      keyPrefix: "chat",
+      fileExtension: extension,
+      publicOrigin,
+    });
+
+    if (parsed.data.type === "IMAGE") {
+      linkImageUrl = uploadedUrl;
+    } else {
+      linkUrl = uploadedUrl;
+      linkTitle = originalName;
+      fileSize = req.file.size;
+    }
   }
 
   const message = await prisma.message.create({
@@ -192,17 +310,18 @@ conversationsRouter.post("/:conversationId/messages", requireAuth, async (req, r
       senderId: req.userId!,
       type: parsed.data.type,
       text: parsed.data.text,
-      linkUrl: parsed.data.linkUrl,
+      linkUrl,
       linkTitle,
       linkImageUrl,
+      fileSize,
     },
-    include: { sender: { select: postAuthorSelect } },
+    include: messageInclude,
   });
 
   const payload = toPublicMessage(message);
 
-  const otherParticipants = await prisma.conversationParticipant.findMany({
-    where: { conversationId, userId: { not: req.userId } },
+  const participants = await prisma.conversationParticipant.findMany({
+    where: { conversationId },
     select: { userId: true },
   });
 
@@ -213,10 +332,11 @@ conversationsRouter.post("/:conversationId/messages", requireAuth, async (req, r
   // Chaining `.to()` targets a union of rooms and Socket.IO dedupes per
   // socket, so a participant who happens to be in both never gets it twice.
   io.to(`conversation:${conversationId}`)
-    .to(otherParticipants.map(({ userId }) => `user:${userId}`))
+    .to(participants.map(({ userId }) => `user:${userId}`))
     .emit("message:new", payload);
 
-  for (const { userId } of otherParticipants) {
+  for (const { userId } of participants) {
+    if (userId === req.userId) continue;
     io.to(`user:${userId}`).emit("conversation:updated", {
       conversationId,
       lastMessage: {
@@ -229,7 +349,156 @@ conversationsRouter.post("/:conversationId/messages", requireAuth, async (req, r
   }
 
   res.status(201).json({ message: payload });
-});
+}
+
+async function findMessageForParticipant(
+  conversationId: string,
+  messageId: string,
+  userId: string,
+) {
+  const participant = await requireParticipant(conversationId, userId);
+  if (!participant) return null;
+  return prisma.message.findFirst({
+    where: { id: messageId, conversationId },
+    include: messageInclude,
+  });
+}
+
+conversationsRouter.post(
+  "/:conversationId/messages/:messageId/hide",
+  requireAuth,
+  async (req, res) => {
+    const conversationId = req.params.conversationId as string;
+    const messageId = req.params.messageId as string;
+    const message = await findMessageForParticipant(
+      conversationId,
+      messageId,
+      req.userId!,
+    );
+    if (!message) {
+      res.status(404).json({ error: "Message not found" });
+      return;
+    }
+
+    await prisma.messageHide.upsert({
+      where: { messageId_userId: { messageId, userId: req.userId! } },
+      create: { messageId, userId: req.userId! },
+      update: {},
+    });
+    getIO().to(`user:${req.userId}`).emit("message:removed", {
+      conversationId,
+      messageId,
+    });
+    res.json({ ok: true });
+  },
+);
+
+conversationsRouter.post(
+  "/:conversationId/messages/:messageId/unsend",
+  requireAuth,
+  async (req, res) => {
+    const conversationId = req.params.conversationId as string;
+    const messageId = req.params.messageId as string;
+    const message = await findMessageForParticipant(
+      conversationId,
+      messageId,
+      req.userId!,
+    );
+    if (!message) {
+      res.status(404).json({ error: "Message not found" });
+      return;
+    }
+    if (message.senderId !== req.userId) {
+      res.status(403).json({ error: "Only the sender can unsend a message" });
+      return;
+    }
+
+    const updated = await prisma.message.update({
+      where: { id: messageId },
+      data: {
+        text: null,
+        linkUrl: null,
+        linkTitle: null,
+        linkImageUrl: null,
+        fileSize: null,
+        unsentAt: new Date(),
+      },
+      include: messageInclude,
+    });
+    await emitMessageUpdated(conversationId, updated);
+    res.json({ message: toPublicMessage(updated) });
+  },
+);
+
+conversationsRouter.post(
+  "/:conversationId/messages/:messageId/reactions",
+  requireAuth,
+  async (req, res) => {
+    const conversationId = req.params.conversationId as string;
+    const messageId = req.params.messageId as string;
+    const emoji = typeof req.body?.emoji === "string" ? req.body.emoji.trim() : "";
+    if (!emoji || [...emoji].length > 8) {
+      res.status(400).json({ error: "Choose a valid reaction" });
+      return;
+    }
+    const message = await findMessageForParticipant(
+      conversationId,
+      messageId,
+      req.userId!,
+    );
+    if (!message || message.unsentAt) {
+      res.status(404).json({ error: "Message not found" });
+      return;
+    }
+
+    const mine = message.reactions.find((reaction) => reaction.userId === req.userId);
+    if (mine?.emoji === emoji) {
+      await prisma.messageReaction.delete({
+        where: { messageId_userId: { messageId, userId: req.userId! } },
+      });
+    } else {
+      await prisma.messageReaction.upsert({
+        where: { messageId_userId: { messageId, userId: req.userId! } },
+        create: { messageId, userId: req.userId!, emoji },
+        update: { emoji },
+      });
+    }
+    const updated = await prisma.message.findUniqueOrThrow({
+      where: { id: messageId },
+      include: messageInclude,
+    });
+    await emitMessageUpdated(conversationId, updated);
+    res.json({ message: toPublicMessage(updated) });
+  },
+);
+
+conversationsRouter.post(
+  "/:conversationId/messages",
+  requireAuth,
+  (req, res) => {
+    // IMAGE/FILE messages arrive as multipart form-data (the file plus a
+    // `type` field); TEXT/LINK stay plain JSON. Only run multer for the
+    // former so the JSON path is untouched.
+    if (req.is("multipart/form-data")) {
+      chatAttachmentUpload.single("file")(req, res, (err) => {
+        if (err) {
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        handleSendMessage(req, res).catch((error) => {
+          console.error(error);
+          res.status(500).json({ error: "Internal server error" });
+        });
+      });
+      return;
+    }
+
+    handleSendMessage(req, res).catch((error) => {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
+    });
+  },
+);
 
 conversationsRouter.post("/:conversationId/read", requireAuth, async (req, res) => {
   const conversationId = req.params.conversationId as string;
