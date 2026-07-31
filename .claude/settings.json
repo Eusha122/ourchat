@@ -51,7 +51,24 @@
       "PowerShell(Get-Process -Id 33832)",
       "Bash(\"F:\\\\flutter\\\\bin\\\\flutter.bat\" analyze *)",
       "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'echo '\\\\''--- pid 59055 ---'\\\\''; ps -p 59055 -o pid,ppid,user,cmd; sudo cat /proc/59055/cmdline 2>&1 | tr '\\\\''\\\\0'\\\\'' '\\\\'' '\\\\''; echo; echo '\\\\''--- pid 59055 cwd ---'\\\\''; sudo readlink /proc/59055/cwd 2>&1; echo '\\\\''--- pm2 describe all \\(ports/cwd\\) ---'\\\\''; pm2 jlist 2>&1 | python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(a['\\\\''name'\\\\''], a['\\\\''pid'\\\\''], a.get\\('\\\\''pm2_env'\\\\'',{}\\).get\\('\\\\''pm_cwd'\\\\''\\), a.get\\('\\\\''pm2_env'\\\\'',{}\\).get\\('\\\\''PORT'\\\\''\\)\\) for a in d]\" 2>&1; echo '\\\\''--- home dir listing ---'\\\\''; ls -la ~; echo '\\\\''--- free ports check ---'\\\\''; for p in 4001 4002 5000 5001 8080; do sudo ss -tln | grep -q \":$p \" && echo \"$p: TAKEN\" || echo \"$p: free\"; done')",
-      "Bash(ssh -i \"C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem\" ubuntu@13.232.202.161 \"sudo certbot --nginx -d ourchat.safeshare.co --non-interactive --agree-tos -m community.slsn.env@gmail.com --redirect 2>&1\")"
+      "Bash(ssh -i \"C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem\" ubuntu@13.232.202.161 \"sudo certbot --nginx -d ourchat.safeshare.co --non-interactive --agree-tos -m community.slsn.env@gmail.com --redirect 2>&1\")",
+      "Bash(ssh -i \"C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem\" ubuntu@13.232.202.161 \"mkdir -p /home/ubuntu/ourchat-backend/downloads\")",
+      "Bash(C:/Users/user/AppData/Local/Android/Sdk/platform-tools/adb.exe uninstall *)",
+      "Bash(C:/Users/user/AppData/Local/Android/Sdk/platform-tools/adb.exe install *)",
+      "Bash(ssh -i \"C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem\" ubuntu@13.232.202.161 \"sudo grep '103.121.62.100' /var/log/nginx/access.log | grep -v 'ourchat.apk' | tail -30; echo '--- all recent auth/register or conversations hits, any IP ---'; sudo grep -E '/auth/|/conversations|/users' /var/log/nginx/access.log | tail -30\")",
+      "Bash(\"F:\\\\flutter\\\\bin\\\\flutter.bat\" build *)",
+      "Bash(scp -i \"C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem\" \"f:\\\\ecripted chat\\\\app\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-release.apk\" ubuntu@13.232.202.161:/tmp/ourchat.apk)",
+      "Bash(ssh -i \"C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem\" ubuntu@13.232.202.161 \"sudo mv /tmp/ourchat.apk /var/www/ourchat/downloads/ourchat.apk && sudo chown www-data:www-data /var/www/ourchat/downloads/ourchat.apk && ls -la /var/www/ourchat/downloads/\")",
+      "Bash(curl -sI --resolve ourchat.safeshare.co:443:13.232.202.161 https://ourchat.safeshare.co/downloads/ourchat.apk)",
+      "Bash(ssh -i \"C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem\" ubuntu@13.232.202.161 \"sudo tail -5 /var/log/nginx/access.log\")",
+      "Bash(C:/Users/user/AppData/Local/Android/Sdk/platform-tools/adb.exe exec-out *)",
+      "Bash(ssh -i \"C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem\" ubuntu@13.232.202.161 \"sed -i 's/APP_VERSION_CODE=4/APP_VERSION_CODE=3/' /home/ubuntu/ourchat-backend/.env && pm2 restart ourchat-backend > /dev/null && sleep 1 && curl -s https://ourchat.safeshare.co/app-version\")",
+      "Bash(find \"/c/Users/user/Downloads\" -maxdepth 1 -iname \"*firebase-adminsdk*\" -o -iname \"*ourchat*adminsdk*\" 2>/dev/null *)",
+      "Read(//c/Users/user/Downloads/**)",
+      "Bash(cp \"/c/Users/user/Downloads/ourchat-d0c9e-firebase-adminsdk-fbsvc-08f7b3de0b.json\" \"f:/ecripted chat/backend/firebase-service-account.json\" *)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\user\\Downloads"
     ]
   }
 }

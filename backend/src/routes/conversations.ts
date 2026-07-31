@@ -3,6 +3,7 @@ import { requireAuth } from "../middleware/auth";
 import { prisma } from "../prisma";
 import { chatAttachmentUpload } from "../lib/attachmentUpload";
 import { fetchLinkMetadata } from "../lib/linkMetadata";
+import { sendMessagePush } from "../lib/push";
 import { postAuthorSelect, toPublicMessage } from "../lib/serializers";
 import { uploadFile } from "../lib/storage";
 import { getIO } from "../socket";
@@ -24,6 +25,23 @@ const messageInclude = {
   sender: { select: postAuthorSelect },
   reactions: { select: { userId: true, emoji: true } },
 } as const;
+
+function messagePreviewText(message: {
+  type: string;
+  text: string | null;
+}): string {
+  if (message.text) return message.text;
+  switch (message.type) {
+    case "IMAGE":
+      return "Sent a photo";
+    case "FILE":
+      return "Sent a file";
+    case "LINK":
+      return "Sent a link";
+    default:
+      return "Sent a message";
+  }
+}
 
 async function emitMessageUpdated(
   conversationId: string,
@@ -335,8 +353,10 @@ async function handleSendMessage(req: Request, res: Response) {
     .to(participants.map(({ userId }) => `user:${userId}`))
     .emit("message:new", payload);
 
+  // Every participant — including the sender — needs this to keep their own
+  // chat list in sync; ChatsScreen only refreshes an entry (or a brand new
+  // conversation) in response to this event, not `message:new`.
   for (const { userId } of participants) {
-    if (userId === req.userId) continue;
     io.to(`user:${userId}`).emit("conversation:updated", {
       conversationId,
       lastMessage: {
@@ -346,6 +366,22 @@ async function handleSendMessage(req: Request, res: Response) {
         createdAt: message.createdAt,
       },
     });
+  }
+
+  // Push notifications are additive to the socket-based delivery above: the
+  // socket path only reaches a device with an active connection (app open,
+  // foreground or backgrounded), so this is what gets a message through when
+  // the app has been fully killed. Fire-and-forget — a push failure must
+  // never fail the send itself.
+  const senderName = message.sender.displayName || `@${message.sender.username}`;
+  const preview = messagePreviewText(message);
+  for (const { userId } of participants) {
+    if (userId === req.userId) continue;
+    sendMessagePush(userId, {
+      title: senderName,
+      body: preview,
+      conversationId,
+    }).catch((error) => console.error("push send failed", error));
   }
 
   res.status(201).json({ message: payload });

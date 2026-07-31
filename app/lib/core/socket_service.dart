@@ -18,6 +18,7 @@ class SocketService {
   final _conversationUpdateController =
       StreamController<ConversationUpdateEvent>.broadcast();
   final _typingController = StreamController<TypingEvent>.broadcast();
+  final _presenceController = StreamController<PresenceEvent>.broadcast();
   final _messageUpdateController = StreamController<ChatMessage>.broadcast();
   final _messageRemovedController =
       StreamController<MessageRemovedEvent>.broadcast();
@@ -32,6 +33,7 @@ class SocketService {
   Stream<ConversationUpdateEvent> get onConversationUpdate =>
       _conversationUpdateController.stream;
   Stream<TypingEvent> get onTyping => _typingController.stream;
+  Stream<PresenceEvent> get onPresence => _presenceController.stream;
   Stream<ChatMessage> get onMessageUpdated => _messageUpdateController.stream;
   Stream<MessageRemovedEvent> get onMessageRemoved =>
       _messageRemovedController.stream;
@@ -82,6 +84,11 @@ class SocketService {
         TypingEvent.fromJson(Map<String, dynamic>.from(data as Map)),
       );
     });
+    _socket!.on('presence:update', (data) {
+      _presenceController.add(
+        PresenceEvent.fromJson(Map<String, dynamic>.from(data as Map)),
+      );
+    });
     _socket!.on('call:offer', (data) {
       _callOfferController.add(
         CallOffer.fromJson(Map<String, dynamic>.from(data as Map)),
@@ -116,6 +123,8 @@ class SocketService {
 
   void leaveConversation(String conversationId) =>
       _socket?.emit('conversation:leave', conversationId);
+
+  void queryPresence(String userId) => _socket?.emit('presence:query', userId);
 
   void sendTyping(String conversationId, bool isTyping) {
     _socket?.emit('typing', {
@@ -173,6 +182,7 @@ class SocketService {
     _messageController.close();
     _conversationUpdateController.close();
     _typingController.close();
+    _presenceController.close();
     _messageUpdateController.close();
     _messageRemovedController.close();
     _callOfferController.close();

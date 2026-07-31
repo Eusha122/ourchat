@@ -3,6 +3,7 @@ dist
 
 # Keep environment variables out of version control
 .env
+firebase-service-account.json
 
 /src/generated/prisma
 uploads/

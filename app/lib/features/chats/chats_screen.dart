@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../auth/state/auth_controller.dart';
 import '../chat/data/chat_models.dart';
 import '../chat/data/conversations_api.dart';
 import '../chat/state/chat_providers.dart';
@@ -34,6 +35,10 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
 
   void _onConversationUpdated(ConversationUpdateEvent event) {
     if (!mounted) return;
+    // Fires for every participant, including whoever just sent the message,
+    // so their own unread badge must not bump for their own message.
+    final myId = ref.read(authControllerProvider).value?.user?.id;
+    final isOwnMessage = event.lastMessage.senderId == myId;
     setState(() {
       final index = _conversations.indexWhere(
         (conversation) => conversation.id == event.conversationId,
@@ -44,7 +49,9 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
       }
       final updated = _conversations[index].copyWith(
         lastMessage: event.lastMessage,
-        unreadCount: _conversations[index].unreadCount + 1,
+        unreadCount: isOwnMessage
+            ? _conversations[index].unreadCount
+            : _conversations[index].unreadCount + 1,
       );
       _conversations
         ..removeAt(index)

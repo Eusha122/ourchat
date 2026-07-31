@@ -68,7 +68,11 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
     // common test case where the same conversation is open on the phone.
     // The in-app banner remains suppressed there because the message is
     // already visible in the thread.
-    NotificationService().showMessageNotification(title: name, body: preview);
+    NotificationService().showMessageNotification(
+      title: name,
+      body: preview,
+      conversationId: message.conversationId,
+    );
     if (ref.read(activeConversationIdProvider) == message.conversationId) {
       return; // already looking at this chat
     }

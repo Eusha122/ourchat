@@ -11,7 +11,11 @@ import {
   toPublicUser,
 } from "../lib/serializers";
 import { feedQuerySchema } from "../validation/posts";
-import { searchUsersSchema, updateProfileSchema } from "../validation/users";
+import {
+  registerDeviceTokenSchema,
+  searchUsersSchema,
+  updateProfileSchema,
+} from "../validation/users";
 
 export const usersRouter = Router();
 
@@ -61,6 +65,32 @@ usersRouter.post("/me/avatar", requireAuth, (req, res) => {
 
     res.json({ user: toPublicUser(user) });
   });
+});
+
+// Re-registering the same token just reassigns ownership (e.g. a different
+// account logging into a device that was previously signed into another
+// account), which is also what stops the old account being notified there.
+usersRouter.post("/me/device-token", requireAuth, async (req, res) => {
+  const parsed = registerDeviceTokenSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  await prisma.deviceToken.upsert({
+    where: { token: parsed.data.token },
+    create: {
+      token: parsed.data.token,
+      platform: parsed.data.platform,
+      userId: req.userId!,
+    },
+    update: {
+      userId: req.userId!,
+      platform: parsed.data.platform,
+    },
+  });
+
+  res.json({ ok: true });
 });
 
 // NOTE: /search must be registered before /:username so it isn't shadowed.

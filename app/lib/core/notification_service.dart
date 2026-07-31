@@ -18,7 +18,9 @@ class NotificationService {
   int _notificationId = 0;
   final _callActionController =
       StreamController<CallNotificationAction>.broadcast();
+  final _messageTapController = StreamController<String>.broadcast();
   final _activeCallNotifications = <String, int>{};
+  static const _conversationPayloadPrefix = 'conversation:';
 
   static const _channelId = 'messages';
   static const _channelName = 'Messages';
@@ -29,6 +31,7 @@ class NotificationService {
 
   Stream<CallNotificationAction> get onCallAction =>
       _callActionController.stream;
+  Stream<String> get onMessageTap => _messageTapController.stream;
 
   /// Sets up the plugin and notification channel. Safe to call in `main()`
   /// before `runApp()` — creates no UI, so it can't be affected by the
@@ -93,6 +96,7 @@ class NotificationService {
   Future<void> showMessageNotification({
     required String title,
     required String body,
+    String? conversationId,
   }) async {
     try {
       // This makes the service resilient if a platform lifecycle race means
@@ -115,9 +119,29 @@ class NotificationService {
             playSound: false,
           ),
         ),
+        payload: conversationId == null
+            ? null
+            : '$_conversationPayloadPrefix$conversationId',
       );
     } catch (_) {
       // Silently handle error
+    }
+  }
+
+  /// Checks whether the app process was just cold-started by tapping a
+  /// message notification (as opposed to the tap-while-running path handled
+  /// by [onMessageTap]), returning the conversation to open if so.
+  Future<String?> takeColdStartConversationId() async {
+    try {
+      final details = await _plugin.getNotificationAppLaunchDetails();
+      if (details?.didNotificationLaunchApp != true) return null;
+      final payload = details?.notificationResponse?.payload;
+      if (payload == null || !payload.startsWith(_conversationPayloadPrefix)) {
+        return null;
+      }
+      return payload.substring(_conversationPayloadPrefix.length);
+    } catch (_) {
+      return null;
     }
   }
 
@@ -188,17 +212,27 @@ class NotificationService {
   }
 
   void _onNotificationResponse(NotificationResponse response) {
-    final callId = response.payload;
+    final payload = response.payload;
+    if (payload == null || payload.isEmpty) return;
+
+    if (payload.startsWith(_conversationPayloadPrefix)) {
+      _messageTapController.add(
+        payload.substring(_conversationPayloadPrefix.length),
+      );
+      return;
+    }
+
     final action = response.actionId;
-    if (callId == null || callId.isEmpty || action == null) return;
+    if (action == null) return;
     if (action == acceptCallAction || action == declineCallAction) {
-      _callActionController.add(CallNotificationAction(callId, action));
+      _callActionController.add(CallNotificationAction(payload, action));
     }
   }
 
   void dispose() {
     _audioPlayer?.dispose();
     _callActionController.close();
+    _messageTapController.close();
   }
 }
 

@@ -65,10 +65,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   StreamSubscription<ChatMessage>? _messageUpdateSub;
   StreamSubscription<MessageRemovedEvent>? _messageRemovedSub;
   StreamSubscription<TypingEvent>? _typingSub;
+  StreamSubscription<PresenceEvent>? _presenceSub;
   Timer? _typingResetTimer;
   bool _isLoading = true;
   bool _isSending = false;
   bool _otherIsTyping = false;
+  bool _otherIsOnline = false;
   String? _error;
 
   @override
@@ -96,6 +98,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         ?.onTyping
         .where((t) => t.userId == widget.otherParticipant.id)
         .listen(_onTyping);
+    final socket = ref.read(socketServiceProvider);
+    _presenceSub = socket?.onPresence
+        .where((event) => event.userId == widget.otherParticipant.id)
+        .listen(_onPresence);
+    socket?.queryPresence(widget.otherParticipant.id);
     ref.read(conversationsApiProvider).markRead(widget.conversationId);
     // Marks this conversation as "open" so the global listener doesn't pop
     // a banner/sound for messages we're already looking at.
@@ -116,6 +123,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     _messageUpdateSub?.cancel();
     _messageRemovedSub?.cancel();
     _typingSub?.cancel();
+    _presenceSub?.cancel();
     _typingResetTimer?.cancel();
     _textController.dispose();
     _scrollController.dispose();
@@ -190,6 +198,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         () => mounted ? setState(() => _otherIsTyping = false) : null,
       );
     }
+  }
+
+  void _onPresence(PresenceEvent event) {
+    if (!mounted) return;
+    setState(() => _otherIsOnline = event.online);
   }
 
   Future<void> _load() async {
@@ -309,6 +322,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 name: name,
                 avatarUrl: other.avatarUrl,
                 isTyping: _otherIsTyping,
+                isOnline: _otherIsOnline,
                 onVideoCall: () => _startCall(CallKind.video),
                 onAudioCall: () => _startCall(CallKind.audio),
               ),
@@ -609,6 +623,7 @@ class _ConversationHeader extends StatelessWidget {
     required this.name,
     required this.avatarUrl,
     required this.isTyping,
+    required this.isOnline,
     required this.onVideoCall,
     required this.onAudioCall,
   });
@@ -616,6 +631,7 @@ class _ConversationHeader extends StatelessWidget {
   final String name;
   final String? avatarUrl;
   final bool isTyping;
+  final bool isOnline;
   final VoidCallback onVideoCall;
   final VoidCallback onAudioCall;
 
@@ -716,17 +732,37 @@ class _ConversationHeader extends StatelessWidget {
                           duration: _motion,
                           switchInCurve: _ease,
                           switchOutCurve: _ease,
-                          child: Text(
-                            isTyping ? 'typing…' : 'Online',
-                            key: ValueKey(isTyping),
-                            style: const TextStyle(
-                              fontFamily: 'Poppins',
-                              color: _muted,
-                              fontSize: 10,
-                              height: 1.2,
-                              fontWeight: FontWeight.w400,
-                              letterSpacing: 0.1,
-                            ),
+                          child: Row(
+                            key: ValueKey('$isTyping-$isOnline'),
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (!isTyping && isOnline) ...[
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFF3DD68C),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                              ],
+                              Text(
+                                isTyping
+                                    ? 'typing…'
+                                    : isOnline
+                                    ? 'Online'
+                                    : 'Offline',
+                                style: const TextStyle(
+                                  fontFamily: 'Poppins',
+                                  color: _muted,
+                                  fontSize: 10,
+                                  height: 1.2,
+                                  fontWeight: FontWeight.w400,
+                                  letterSpacing: 0.1,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],

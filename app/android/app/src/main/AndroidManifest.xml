@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The debug/profile manifests get this for free (for hot reload's VM
+         service); release needs it explicitly since the app talks to a real
+         backend over HTTP/WebSocket at runtime. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Required by image_picker's ImageSource.camera. -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>

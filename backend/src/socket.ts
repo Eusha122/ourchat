@@ -21,6 +21,35 @@ type ActiveCall = {
 // Signaling is intentionally transient. SDP/ICE never reaches the database;
 // it only passes through Socket.IO while a peer-to-peer call is being set up.
 const activeCalls = new Map<string, ActiveCall>();
+
+// Presence is in-memory only (not persisted) — counts active sockets per user
+// so a device with multiple tabs/reconnects doesn't flicker offline early.
+const onlineCounts = new Map<string, number>();
+// A brief grace period before announcing "offline" absorbs quick
+// reconnects (app backgrounding, network blips) without visible flicker.
+const offlineTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const OFFLINE_GRACE_MS = 5_000;
+
+async function getConversationPartnerIds(userId: string): Promise<string[]> {
+  const own = await prisma.conversationParticipant.findMany({
+    where: { userId },
+    select: { conversationId: true },
+  });
+  const conversationIds = own.map((p) => p.conversationId);
+  if (conversationIds.length === 0) return [];
+  const others = await prisma.conversationParticipant.findMany({
+    where: { conversationId: { in: conversationIds }, userId: { not: userId } },
+    select: { userId: true },
+  });
+  return [...new Set(others.map((o) => o.userId))];
+}
+
+async function broadcastPresence(userId: string, online: boolean) {
+  const partnerIds = await getConversationPartnerIds(userId);
+  for (const partnerId of partnerIds) {
+    io?.to(`user:${partnerId}`).emit("presence:update", { userId, online });
+  }
+}
 const callMessageInclude = {
   sender: { select: postAuthorSelect },
   reactions: { select: { userId: true, emoji: true } },
@@ -126,6 +155,45 @@ export function initSocket(httpServer: HttpServer): Server {
   io.on("connection", (socket) => {
     const userId = socket.data.userId as string;
     socket.join(`user:${userId}`);
+
+    const pendingOffline = offlineTimers.get(userId);
+    if (pendingOffline) {
+      clearTimeout(pendingOffline);
+      offlineTimers.delete(userId);
+    }
+    const previousCount = onlineCounts.get(userId) ?? 0;
+    onlineCounts.set(userId, previousCount + 1);
+    if (previousCount === 0) {
+      void broadcastPresence(userId, true).catch((error) =>
+        console.error("presence broadcast failed", error),
+      );
+    }
+
+    // Lets a freshly opened conversation screen ask for the other person's
+    // current status instead of waiting for their next state change.
+    socket.on("presence:query", (targetUserId: unknown) => {
+      if (typeof targetUserId !== "string") return;
+      socket.emit("presence:update", {
+        userId: targetUserId,
+        online: (onlineCounts.get(targetUserId) ?? 0) > 0,
+      });
+    });
+
+    socket.on("disconnect", () => {
+      const count = onlineCounts.get(userId) ?? 0;
+      if (count <= 1) {
+        onlineCounts.delete(userId);
+        const timer = setTimeout(() => {
+          offlineTimers.delete(userId);
+          void broadcastPresence(userId, false).catch((error) =>
+            console.error("presence broadcast failed", error),
+          );
+        }, OFFLINE_GRACE_MS);
+        offlineTimers.set(userId, timer);
+      } else {
+        onlineCounts.set(userId, count - 1);
+      }
+    });
 
     socket.on("conversation:join", (conversationId: string) => {
       socket.join(`conversation:${conversationId}`);

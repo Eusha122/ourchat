@@ -30,6 +30,22 @@ model User {
   messages     Message[]
   messageHides MessageHide[]
   messageReactions MessageReaction[]
+  deviceTokens DeviceToken[]
+}
+
+/// One row per installed device. A push is sent to every token a user has
+/// registered, so the same account can stay logged in on more than one
+/// device and get notified on all of them.
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model Post {

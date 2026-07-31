@@ -63,6 +63,18 @@ class UsersApi {
     });
   }
 
+  Future<void> registerDeviceToken({
+    required String token,
+    required String platform,
+  }) async {
+    return _handle(() async {
+      await _dio.post(
+        '/users/me/device-token',
+        data: {'token': token, 'platform': platform},
+      );
+    });
+  }
+
   Future<FeedPage> fetchUserPosts(
     String username, {
     String? cursor,

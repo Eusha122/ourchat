@@ -248,3 +248,17 @@ class TypingEvent {
   final String userId;
   final bool isTyping;
 }
+
+class PresenceEvent {
+  const PresenceEvent({required this.userId, required this.online});
+
+  factory PresenceEvent.fromJson(Map<String, dynamic> json) {
+    return PresenceEvent(
+      userId: json['userId'] as String,
+      online: json['online'] as bool,
+    );
+  }
+
+  final String userId;
+  final bool online;
+}

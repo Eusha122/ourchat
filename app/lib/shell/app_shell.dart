@@ -36,7 +36,6 @@ class AppShell extends ConsumerWidget {
         ),
       ),
       child: SafeArea(
-        bottom: false,
         child: Column(
           children: [
             // Top: OurChat logo + avatar

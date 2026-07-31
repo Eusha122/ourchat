@@ -6,15 +6,21 @@
 // for now so the rest of the app can build/run; re-enable once a proper
 // cmdline-tools/sdkmanager install resolves the SDK 37 mismatch, then restore
 // this file from git history plus the `receive_sharing_intent` pubspec dep.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import 'core/global_message_listener.dart';
 import 'core/global_call_listener.dart';
 import 'core/app_update_prompt.dart';
 import 'core/call_ringtone_service.dart';
 import 'core/notification_service.dart';
+import 'core/push_notification_service.dart';
 import 'core/theme.dart';
+import 'features/auth/state/auth_controller.dart';
+import 'features/users/state/users_providers.dart';
 import 'router/app_router.dart';
 
 class OurChatApp extends ConsumerStatefulWidget {
@@ -26,16 +32,53 @@ class OurChatApp extends ConsumerStatefulWidget {
 
 class _OurChatAppState extends ConsumerState<OurChatApp> {
   final _scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+  StreamSubscription<String>? _messageTapSub;
 
   @override
   void initState() {
     super.initState();
     // The Android permission dialog needs a resumed Activity, which isn't
     // guaranteed yet during main() — ask once the first frame is up.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       NotificationService().requestPermission();
       CallRingtoneService.instance.init();
+
+      final coldStartId = await NotificationService()
+          .takeColdStartConversationId();
+      if (coldStartId != null) _openConversation(coldStartId);
     });
+
+    _messageTapSub = NotificationService().onMessageTap.listen(
+      _openConversation,
+    );
+
+    // Fires immediately for an already-authenticated cold start, and again
+    // on every future login — a fresh FCM token needs registering either way.
+    ref.listenManual(authControllerProvider, (previous, next) {
+      if (next.value?.user == null) return;
+      PushNotificationService.instance.start((token) async {
+        try {
+          await ref
+              .read(usersApiProvider)
+              .registerDeviceToken(token: token, platform: 'android');
+        } catch (_) {
+          // Best-effort: this device just won't get pushes until the next
+          // successful registration attempt. Must never block app usage.
+        }
+      });
+    }, fireImmediately: true);
+  }
+
+  void _openConversation(String conversationId) {
+    final context = rootNavigatorKey.currentContext;
+    if (context == null || !context.mounted) return;
+    GoRouter.of(context).push('/chats/$conversationId');
+  }
+
+  @override
+  void dispose() {
+    _messageTapSub?.cancel();
+    super.dispose();
   }
 
   @override
