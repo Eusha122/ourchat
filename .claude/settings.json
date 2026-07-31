@@ -48,7 +48,10 @@
       "Bash(adb shell *)",
       "Bash(export ADB=\"C:/Users/user/AppData/Local/Android/Sdk/platform-tools/adb.exe\")",
       "Bash(C:/Users/user/AppData/Local/Android/Sdk/platform-tools/adb.exe shell *)",
-      "PowerShell(Get-Process -Id 33832)"
+      "PowerShell(Get-Process -Id 33832)",
+      "Bash(\"F:\\\\flutter\\\\bin\\\\flutter.bat\" analyze *)",
+      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'echo '\\\\''--- pid 59055 ---'\\\\''; ps -p 59055 -o pid,ppid,user,cmd; sudo cat /proc/59055/cmdline 2>&1 | tr '\\\\''\\\\0'\\\\'' '\\\\'' '\\\\''; echo; echo '\\\\''--- pid 59055 cwd ---'\\\\''; sudo readlink /proc/59055/cwd 2>&1; echo '\\\\''--- pm2 describe all \\(ports/cwd\\) ---'\\\\''; pm2 jlist 2>&1 | python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(a['\\\\''name'\\\\''], a['\\\\''pid'\\\\''], a.get\\('\\\\''pm2_env'\\\\'',{}\\).get\\('\\\\''pm_cwd'\\\\''\\), a.get\\('\\\\''pm2_env'\\\\'',{}\\).get\\('\\\\''PORT'\\\\''\\)\\) for a in d]\" 2>&1; echo '\\\\''--- home dir listing ---'\\\\''; ls -la ~; echo '\\\\''--- free ports check ---'\\\\''; for p in 4001 4002 5000 5001 8080; do sudo ss -tln | grep -q \":$p \" && echo \"$p: TAKEN\" || echo \"$p: free\"; done')",
+      "Bash(ssh -i \"C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem\" ubuntu@13.232.202.161 \"sudo certbot --nginx -d ourchat.safeshare.co --non-interactive --agree-tos -m community.slsn.env@gmail.com --redirect 2>&1\")"
     ]
   }
 }

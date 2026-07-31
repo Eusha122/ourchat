@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -18,6 +18,8 @@ import '../features/splash/splash_screen.dart';
 import '../features/users/screens/public_profile_screen.dart';
 import '../shell/app_shell.dart';
 
+final rootNavigatorKey = GlobalKey<NavigatorState>();
+
 /// Bridges Riverpod's [authControllerProvider] to go_router's
 /// [Listenable]-based `refreshListenable`, so the router re-evaluates
 /// [GoRouter.redirect] whenever auth state changes.
@@ -33,6 +35,7 @@ final goRouterProvider = Provider<GoRouter>((ref) {
   final authListenable = _AuthListenable(ref);
 
   return GoRouter(
+    navigatorKey: rootNavigatorKey,
     initialLocation: '/splash',
     refreshListenable: authListenable,
     redirect: (context, state) {
@@ -56,7 +59,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
-      GoRoute(path: '/splash', builder: (context, state) => const SplashScreen()),
+      GoRoute(
+        path: '/splash',
+        builder: (context, state) => const SplashScreen(),
+      ),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
       GoRoute(
         path: '/register',
@@ -68,9 +74,8 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/share-target',
-        builder: (context, state) => ShareTargetScreen(
-          sharedUrl: state.extra as String,
-        ),
+        builder: (context, state) =>
+            ShareTargetScreen(sharedUrl: state.extra as String),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {

@@ -4,12 +4,14 @@ enum MessageType {
   text,
   link,
   image,
-  file;
+  file,
+  call;
 
   static MessageType fromJson(String value) => switch (value) {
     'LINK' => MessageType.link,
     'IMAGE' => MessageType.image,
     'FILE' => MessageType.file,
+    'CALL' => MessageType.call,
     _ => MessageType.text,
   };
 }
@@ -89,6 +91,9 @@ class ChatMessage {
     required this.linkTitle,
     required this.linkImageUrl,
     required this.fileSize,
+    required this.callKind,
+    required this.callStatus,
+    required this.callDurationSeconds,
     required this.isUnsent,
     required this.reactions,
     required this.createdAt,
@@ -105,6 +110,9 @@ class ChatMessage {
       linkTitle: json['linkTitle'] as String?,
       linkImageUrl: json['linkImageUrl'] as String?,
       fileSize: json['fileSize'] as int?,
+      callKind: json['callKind'] as String?,
+      callStatus: json['callStatus'] as String?,
+      callDurationSeconds: json['callDurationSeconds'] as int?,
       isUnsent: json['isUnsent'] as bool? ?? false,
       reactions: (json['reactions'] as List? ?? const [])
           .map((item) => MessageReaction.fromJson(item as Map<String, dynamic>))
@@ -122,6 +130,9 @@ class ChatMessage {
   final String? linkTitle;
   final String? linkImageUrl;
   final int? fileSize;
+  final String? callKind;
+  final String? callStatus;
+  final int? callDurationSeconds;
   final bool isUnsent;
   final List<MessageReaction> reactions;
   final DateTime createdAt;
@@ -134,6 +145,9 @@ class ChatMessage {
     String? linkTitle,
     String? linkImageUrl,
     int? fileSize,
+    String? callKind,
+    String? callStatus,
+    int? callDurationSeconds,
     bool? isUnsent,
     List<MessageReaction>? reactions,
   }) {
@@ -146,6 +160,9 @@ class ChatMessage {
       linkTitle: linkTitle ?? this.linkTitle,
       linkImageUrl: linkImageUrl ?? this.linkImageUrl,
       fileSize: fileSize ?? this.fileSize,
+      callKind: callKind ?? this.callKind,
+      callStatus: callStatus ?? this.callStatus,
+      callDurationSeconds: callDurationSeconds ?? this.callDurationSeconds,
       isUnsent: isUnsent ?? this.isUnsent,
       reactions: reactions ?? this.reactions,
       createdAt: createdAt,

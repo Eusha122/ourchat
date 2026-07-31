@@ -93,6 +93,19 @@ enum MessageType {
   LINK
   IMAGE
   FILE
+  CALL
+}
+
+enum CallKind {
+  AUDIO
+  VIDEO
+}
+
+enum CallStatus {
+  STARTED
+  COMPLETED
+  MISSED
+  DECLINED
 }
 
 model Message {
@@ -112,6 +125,9 @@ model Message {
   linkTitle      String?
   linkImageUrl   String?
   fileSize       Int?
+  callKind       CallKind?
+  callStatus     CallStatus?
+  callDurationSeconds Int?
   unsentAt       DateTime?
   createdAt      DateTime     @default(now())
 

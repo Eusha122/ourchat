@@ -14,6 +14,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../auth/state/auth_controller.dart';
+import '../../calls/call_models.dart';
+import '../../calls/call_session_screen.dart';
 import '../../posts/data/post_models.dart';
 import '../data/chat_models.dart';
 import '../data/conversations_api.dart';
@@ -123,7 +125,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   void _onIncomingMessage(ChatMessage message) {
     if (!mounted) return;
     final myId = ref.read(authControllerProvider).value?.user?.id;
-    if (message.sender.id == myId) return; // avoid duplicating our own send
+    if (message.sender.id == myId && message.type != MessageType.call) {
+      return; // avoid duplicating our own send
+    }
     setState(() => _messages.insert(0, message));
     ref.read(conversationsApiProvider).markRead(widget.conversationId);
   }
@@ -305,6 +309,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 name: name,
                 avatarUrl: other.avatarUrl,
                 isTyping: _otherIsTyping,
+                onVideoCall: () => _startCall(CallKind.video),
+                onAudioCall: () => _startCall(CallKind.audio),
               ),
               Expanded(child: _buildMessages()),
               _Composer(
@@ -321,6 +327,19 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  void _startCall(CallKind kind) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => CallSessionScreen.outgoing(
+          conversationId: widget.conversationId,
+          otherParticipant: widget.otherParticipant,
+          kind: kind,
+        ),
       ),
     );
   }
@@ -396,6 +415,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   mine: isMine,
                 ),
                 MessageType.file => _FileBubble(message: message, mine: isMine),
+                MessageType.call => _CallHistoryBubble(
+                  message: message,
+                  mine: isMine,
+                ),
                 MessageType.text => _Bubble(
                   text: message.text ?? '',
                   mine: isMine,
@@ -586,11 +609,15 @@ class _ConversationHeader extends StatelessWidget {
     required this.name,
     required this.avatarUrl,
     required this.isTyping,
+    required this.onVideoCall,
+    required this.onAudioCall,
   });
 
   final String name;
   final String? avatarUrl;
   final bool isTyping;
+  final VoidCallback onVideoCall;
+  final VoidCallback onAudioCall;
 
   @override
   Widget build(BuildContext context) {
@@ -708,13 +735,13 @@ class _ConversationHeader extends StatelessWidget {
                   _OutlineCircleButton(
                     painter: const _VideoIconPainter(),
                     semanticLabel: 'Video call',
-                    onTap: () => _showComingSoon(context, 'Video calls'),
+                    onTap: onVideoCall,
                   ),
                   const SizedBox(width: 11),
                   _OutlineCircleButton(
                     painter: const _PhoneIconPainter(),
                     semanticLabel: 'Voice call',
-                    onTap: () => _showComingSoon(context, 'Voice calls'),
+                    onTap: onAudioCall,
                   ),
                 ],
               ),
@@ -1111,6 +1138,116 @@ class _Bubble extends StatelessWidget {
 
 /// An uploaded photo, shown as a rounded thumbnail. Tapping keeps the user
 /// inside OurChat and opens a full-screen, zoomable viewer.
+class _CallHistoryBubble extends StatelessWidget {
+  const _CallHistoryBubble({required this.message, required this.mine});
+
+  final ChatMessage message;
+  final bool mine;
+
+  String get _kind => message.callKind == 'VIDEO' ? 'Video call' : 'Voice call';
+
+  String get _duration {
+    final seconds = message.callDurationSeconds;
+    if (seconds == null || seconds <= 0) return '';
+    final minutes = (seconds ~/ 60).toString().padLeft(2, '0');
+    final remainder = (seconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$remainder';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final status = message.callStatus ?? 'STARTED';
+    final isMissed = status == 'MISSED';
+    final title = switch (status) {
+      'COMPLETED' =>
+        mine
+            ? 'You started a $_kind'
+            : '${message.sender.username} started a $_kind',
+      'MISSED' => mine ? 'You called • no answer' : 'Missed $_kind',
+      'DECLINED' => mine ? 'You called • declined' : '$_kind declined',
+      _ =>
+        mine
+            ? 'You started a $_kind'
+            : '${message.sender.username} started a $_kind',
+    };
+    final detail = status == 'STARTED'
+        ? 'Calling'
+        : _duration.isNotEmpty
+        ? 'Ended • $_duration'
+        : status == 'MISSED'
+        ? 'No answer'
+        : status == 'DECLINED'
+        ? 'Declined'
+        : 'Ended';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 260),
+          padding: const EdgeInsets.fromLTRB(14, 11, 16, 11),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(19),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.24)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: isMissed
+                      ? const Color(0xFFFFDCE0)
+                      : Colors.white.withValues(alpha: 0.18),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  message.callKind == 'VIDEO'
+                      ? Icons.videocam_rounded
+                      : Icons.call_rounded,
+                  size: 18,
+                  color: isMissed ? const Color(0xFFE24B58) : Colors.white,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        color: Colors.white,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      detail,
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        color: Colors.white.withValues(alpha: 0.72),
+                        fontSize: 10.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ImageBubble extends StatelessWidget {
   const _ImageBubble({required this.message, required this.mine});
 

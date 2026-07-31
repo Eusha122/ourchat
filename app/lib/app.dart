@@ -10,6 +10,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/global_message_listener.dart';
+import 'core/global_call_listener.dart';
+import 'core/app_update_prompt.dart';
+import 'core/call_ringtone_service.dart';
 import 'core/notification_service.dart';
 import 'core/theme.dart';
 import 'router/app_router.dart';
@@ -31,6 +34,7 @@ class _OurChatAppState extends ConsumerState<OurChatApp> {
     // guaranteed yet during main() — ask once the first frame is up.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       NotificationService().requestPermission();
+      CallRingtoneService.instance.init();
     });
   }
 
@@ -45,9 +49,13 @@ class _OurChatAppState extends ConsumerState<OurChatApp> {
       themeMode: ThemeMode.light,
       routerConfig: router,
       scaffoldMessengerKey: _scaffoldMessengerKey,
-      builder: (context, child) => GlobalMessageListener(
-        scaffoldMessengerKey: _scaffoldMessengerKey,
-        child: child ?? const SizedBox.shrink(),
+      builder: (context, child) => AppUpdatePrompt(
+        child: GlobalCallListener(
+          child: GlobalMessageListener(
+            scaffoldMessengerKey: _scaffoldMessengerKey,
+            child: child ?? const SizedBox.shrink(),
+          ),
+        ),
       ),
     );
   }

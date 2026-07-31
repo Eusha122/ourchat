@@ -2,6 +2,7 @@ import type { Server as HttpServer } from "http";
 import { Server } from "socket.io";
 import { verifyAccessToken } from "./lib/jwt";
 import { prisma } from "./prisma";
+import { postAuthorSelect, toPublicMessage } from "./lib/serializers";
 
 let io: Server | undefined;
 
@@ -11,11 +12,73 @@ type ActiveCall = {
   conversationId: string;
   callerId: string;
   calleeId: string;
+  messageId: string;
+  kind: CallKind;
+  startedAt: Date;
+  acceptedAt?: Date;
 };
 
 // Signaling is intentionally transient. SDP/ICE never reaches the database;
 // it only passes through Socket.IO while a peer-to-peer call is being set up.
 const activeCalls = new Map<string, ActiveCall>();
+const callMessageInclude = {
+  sender: { select: postAuthorSelect },
+  reactions: { select: { userId: true, emoji: true } },
+} as const;
+
+async function emitCallMessage(
+  conversationId: string,
+  message: Parameters<typeof toPublicMessage>[0],
+  event: "message:new" | "message:updated",
+) {
+  const participants = await prisma.conversationParticipant.findMany({
+    where: { conversationId },
+    select: { userId: true },
+  });
+  io
+    ?.to(`conversation:${conversationId}`)
+    .to(participants.map(({ userId }) => `user:${userId}`))
+    .emit(event, toPublicMessage(message));
+}
+
+async function concludeCall(
+  callId: string,
+  reason: string,
+  notifyUserIds: string[],
+) {
+  const call = activeCalls.get(callId);
+  if (!call) return;
+  activeCalls.delete(callId);
+
+  const acceptedAt = call.acceptedAt;
+  const duration = acceptedAt != null
+    ? Math.max(0, Math.floor((Date.now() - acceptedAt.getTime()) / 1000))
+    : null;
+  const status = acceptedAt != null
+    ? "COMPLETED"
+    : reason === "declined"
+      ? "DECLINED"
+      : "MISSED";
+  const label = `${call.kind} call`;
+  const summary = status === "COMPLETED"
+    ? `${label} ended${duration != null ? ` • ${duration}s` : ""}`
+    : status === "DECLINED"
+      ? `${label} declined`
+      : `${label} missed`;
+  const callMessage = await prisma.message.update({
+    where: { id: call.messageId },
+    data: {
+      callStatus: status,
+      callDurationSeconds: duration,
+      text: summary,
+    },
+    include: callMessageInclude,
+  });
+  await emitCallMessage(call.conversationId, callMessage, "message:updated");
+  for (const userId of notifyUserIds) {
+    io?.to(`user:${userId}`).emit("call:end", { callId, reason });
+  }
+}
 
 function isCallKind(value: unknown): value is CallKind {
   return value === "audio" || value === "video";
@@ -97,6 +160,7 @@ export function initSocket(httpServer: HttpServer): Server {
         ) {
           return;
         }
+        const callId = data.callId;
         const participants = await prisma.conversationParticipant.findMany({
           where: { conversationId: data.conversationId },
           include: {
@@ -116,13 +180,40 @@ export function initSocket(httpServer: HttpServer): Server {
         // socket signal a user it does not share a conversation with.
         if (!caller || !callee || participants.length !== 2) return;
 
-        activeCalls.set(data.callId, {
+        const callMessage = await prisma.message.create({
+          data: {
+            conversationId: data.conversationId,
+            senderId: userId,
+            type: "CALL",
+            text: `Started a ${data.kind} call`,
+            callKind: data.kind === "video" ? "VIDEO" : "AUDIO",
+            callStatus: "STARTED",
+          },
+          include: callMessageInclude,
+        });
+        activeCalls.set(callId, {
           conversationId: data.conversationId,
           callerId: userId,
           calleeId: callee.userId,
+          messageId: callMessage.id,
+          kind: data.kind,
+          startedAt: new Date(),
         });
+        setTimeout(() => {
+          const active = activeCalls.get(callId);
+          if (!active || active.acceptedAt != null) return;
+          void concludeCall(callId, "timeout", [
+            active.callerId,
+            active.calleeId,
+          ]).catch((error) => console.error("call timeout failed", error));
+        }, 35_000);
+        await emitCallMessage(data.conversationId, callMessage, "message:new");
+        // Acknowledge only after the conversation membership check completed.
+        // The caller buffers its first ICE candidates until this point, which
+        // avoids dropping them while this async database lookup is in flight.
+        socket.emit("call:ready", { callId });
         io?.to(`user:${callee.userId}`).emit("call:offer", {
-          callId: data.callId,
+          callId,
           conversationId: data.conversationId,
           kind: data.kind,
           offer: data.offer,
@@ -136,6 +227,7 @@ export function initSocket(httpServer: HttpServer): Server {
       if (typeof data.callId !== "string" || !isSignal(data.answer)) return;
       const call = activeCalls.get(data.callId);
       if (!call || call.calleeId !== userId) return;
+      call.acceptedAt = new Date();
       io?.to(`user:${call.callerId}`).emit("call:answer", {
         callId: data.callId,
         answer: data.answer,
@@ -155,16 +247,45 @@ export function initSocket(httpServer: HttpServer): Server {
     });
 
     socket.on("call:end", (payload: unknown) => {
+      void (async () => {
       const data = payload as { callId?: unknown; reason?: unknown };
       if (typeof data.callId !== "string") return;
       const call = activeCalls.get(data.callId);
       if (!call || (call.callerId !== userId && call.calleeId !== userId)) return;
       activeCalls.delete(data.callId);
       const peerId = call.callerId === userId ? call.calleeId : call.callerId;
+      const reason = typeof data.reason === "string" ? data.reason : "ended";
+      const acceptedAt = call.acceptedAt;
+      const wasConnected = acceptedAt != null;
+      const duration = acceptedAt != null
+        ? Math.max(0, Math.floor((Date.now() - acceptedAt.getTime()) / 1000))
+        : null;
+      const status = wasConnected
+        ? "COMPLETED"
+        : reason === "declined"
+          ? "DECLINED"
+          : "MISSED";
+      const label = `${call.kind} call`;
+      const summary = status === "COMPLETED"
+        ? `${label} ended${duration != null ? ` • ${duration}s` : ""}`
+        : status === "DECLINED"
+          ? `${label} declined`
+          : `${label} missed`;
+      const callMessage = await prisma.message.update({
+        where: { id: call.messageId },
+        data: {
+          callStatus: status,
+          callDurationSeconds: duration,
+          text: summary,
+        },
+        include: callMessageInclude,
+      });
+      await emitCallMessage(call.conversationId, callMessage, "message:updated");
       io?.to(`user:${peerId}`).emit("call:end", {
         callId: data.callId,
-        reason: typeof data.reason === "string" ? data.reason : "ended",
+        reason,
       });
+      })().catch((error) => console.error("call end relay failed", error));
     });
   });
 

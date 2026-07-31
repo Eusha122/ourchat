@@ -56,6 +56,10 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
         : switch (message.type) {
             MessageType.image => 'Sent a photo',
             MessageType.file => 'Sent a file',
+            MessageType.call =>
+              message.callKind == 'VIDEO'
+                  ? 'Incoming video call'
+                  : 'Incoming voice call',
             MessageType.link => 'Sent a link',
             MessageType.text => 'Sent a message',
           };

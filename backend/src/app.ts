@@ -21,6 +21,27 @@ app.use("/users", usersRouter);
 app.use("/posts", postsRouter);
 app.use("/conversations", conversationsRouter);
 
+// Public, deliberately small release manifest for the Android sideloaded
+// application.  Publish a new APK by changing these environment variables on
+// the VPS and restarting the backend; the app compares this build number to
+// the `+build` number baked into its installed package.
+app.get("/app-version", (_req, res) => {
+  const configuredVersion = Number.parseInt(
+    process.env.APP_VERSION_CODE ?? "1",
+    10,
+  );
+  const versionCode = Number.isSafeInteger(configuredVersion)
+    ? configuredVersion
+    : 1;
+  const downloadUrl = process.env.APP_DOWNLOAD_URL?.trim() || null;
+  const releaseNotes = process.env.APP_RELEASE_NOTES?.trim() || null;
+
+  // Do not let a CDN/browser cache an old manifest after a release is
+  // published; clients should see the new build on their next app launch.
+  res.set("Cache-Control", "no-store");
+  res.json({ versionCode, downloadUrl, releaseNotes });
+});
+
 app.get("/health", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;

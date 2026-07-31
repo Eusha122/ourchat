@@ -25,6 +25,7 @@ class SocketService {
   final _callAnswerController = StreamController<CallAnswer>.broadcast();
   final _callIceController = StreamController<CallIceCandidate>.broadcast();
   final _callEndedController = StreamController<CallEndedEvent>.broadcast();
+  final _callReadyController = StreamController<String>.broadcast();
   final _pendingIce = <String, List<CallIceCandidate>>{};
 
   Stream<ChatMessage> get onMessage => _messageController.stream;
@@ -38,6 +39,7 @@ class SocketService {
   Stream<CallAnswer> get onCallAnswer => _callAnswerController.stream;
   Stream<CallIceCandidate> get onCallIce => _callIceController.stream;
   Stream<CallEndedEvent> get onCallEnded => _callEndedController.stream;
+  Stream<String> get onCallReady => _callReadyController.stream;
 
   void connect() {
     _socket = io.io(
@@ -81,10 +83,14 @@ class SocketService {
       );
     });
     _socket!.on('call:offer', (data) {
-      _callOfferController.add(CallOffer.fromJson(Map<String, dynamic>.from(data as Map)));
+      _callOfferController.add(
+        CallOffer.fromJson(Map<String, dynamic>.from(data as Map)),
+      );
     });
     _socket!.on('call:answer', (data) {
-      _callAnswerController.add(CallAnswer.fromJson(Map<String, dynamic>.from(data as Map)));
+      _callAnswerController.add(
+        CallAnswer.fromJson(Map<String, dynamic>.from(data as Map)),
+      );
     });
     _socket!.on('call:ice', (data) {
       final candidate = CallIceCandidate.fromJson(
@@ -97,6 +103,11 @@ class SocketService {
       _callEndedController.add(
         CallEndedEvent.fromJson(Map<String, dynamic>.from(data as Map)),
       );
+    });
+    _socket!.on('call:ready', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      final callId = map['callId'];
+      if (callId is String) _callReadyController.add(callId);
     });
   }
 
@@ -168,5 +179,6 @@ class SocketService {
     _callAnswerController.close();
     _callIceController.close();
     _callEndedController.close();
+    _callReadyController.close();
   }
 }

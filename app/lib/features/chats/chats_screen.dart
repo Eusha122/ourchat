@@ -73,22 +73,11 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: AnimatedSwitcher(
-            duration: _motion,
-            switchInCurve: Curves.easeInOutCubic,
-            switchOutCurve: Curves.easeInOutCubic,
-            child: _buildBody(),
-          ),
-        ),
-        Positioned(
-          right: 26,
-          bottom: 30,
-          child: _ComposeButton(onTap: () => context.go('/search')),
-        ),
-      ],
+    return AnimatedSwitcher(
+      duration: _motion,
+      switchInCurve: Curves.easeInOutCubic,
+      switchOutCurve: Curves.easeInOutCubic,
+      child: _buildBody(),
     );
   }
 
@@ -98,7 +87,11 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
     }
 
     if (_error != null) {
-      return _ErrorState(key: const ValueKey('error'), message: _error!, onRetry: _load);
+      return _ErrorState(
+        key: const ValueKey('error'),
+        message: _error!,
+        onRetry: _load,
+      );
     }
 
     if (_conversations.isEmpty) {

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/auth/state/auth_controller.dart';
+import '../features/calls/ringtone_settings_sheet.dart';
 
 const _muted = Color(0xFF8A8A8A);
 const _purple = Color(0xFF5D4EF5);
@@ -62,7 +63,9 @@ class AppShell extends ConsumerWidget {
                 ),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
-                  child: _TopBar(onAvatarTap: () => navigationShell.goBranch(3)),
+                  child: _TopBar(
+                    onAvatarTap: () => navigationShell.goBranch(3),
+                  ),
                 ),
               ),
             ),
@@ -162,21 +165,47 @@ class _TopBar extends ConsumerWidget {
             letterSpacing: -0.5,
           ),
         ),
-        GestureDetector(
-          onTap: onAvatarTap,
-          child: SizedBox(
-            width: 40,
-            height: 40,
-            child: ClipOval(
-              child: avatarUrl == null
-                  ? placeholder
-                  : CachedNetworkImage(
-                      imageUrl: avatarUrl,
-                      fit: BoxFit.cover,
-                      errorWidget: (_, _, _) => placeholder,
-                    ),
+        Row(
+          children: [
+            GestureDetector(
+              onTap: onAvatarTap,
+              child: SizedBox(
+                width: 40,
+                height: 40,
+                child: ClipOval(
+                  child: avatarUrl == null
+                      ? placeholder
+                      : CachedNetworkImage(
+                          imageUrl: avatarUrl,
+                          fit: BoxFit.cover,
+                          errorWidget: (_, _, _) => placeholder,
+                        ),
+                ),
+              ),
             ),
-          ),
+            const SizedBox(width: 10),
+            GestureDetector(
+              onTap: () => showModalBottomSheet<void>(
+                context: context,
+                backgroundColor: Colors.transparent,
+                builder: (_) => const RingtoneSettingsSheet(),
+              ),
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F4FC),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFFE9E7F5)),
+                ),
+                child: const Icon(
+                  Icons.settings_rounded,
+                  size: 19,
+                  color: _purple,
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );

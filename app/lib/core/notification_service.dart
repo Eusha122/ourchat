@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:just_audio/just_audio.dart';
 
@@ -14,10 +16,19 @@ class NotificationService {
   final _plugin = FlutterLocalNotificationsPlugin();
   bool _initialized = false;
   int _notificationId = 0;
+  final _callActionController =
+      StreamController<CallNotificationAction>.broadcast();
+  final _activeCallNotifications = <String, int>{};
 
   static const _channelId = 'messages';
   static const _channelName = 'Messages';
   static const _channelDescription = 'Notifications for new chat messages';
+  static const _callChannelId = 'calls';
+  static const acceptCallAction = 'accept_call';
+  static const declineCallAction = 'decline_call';
+
+  Stream<CallNotificationAction> get onCallAction =>
+      _callActionController.stream;
 
   /// Sets up the plugin and notification channel. Safe to call in `main()`
   /// before `runApp()` — creates no UI, so it can't be affected by the
@@ -29,6 +40,7 @@ class NotificationService {
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
     await _plugin.initialize(
       const InitializationSettings(android: androidInit),
+      onDidReceiveNotificationResponse: _onNotificationResponse,
     );
 
     const channel = AndroidNotificationChannel(
@@ -42,6 +54,17 @@ class NotificationService {
           AndroidFlutterLocalNotificationsPlugin
         >()
         ?.createNotificationChannel(channel);
+    const callChannel = AndroidNotificationChannel(
+      _callChannelId,
+      'Calls',
+      description: 'Incoming call alerts',
+      importance: Importance.max,
+    );
+    await _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(callChannel);
   }
 
   /// Requests the Android 13+ POST_NOTIFICATIONS permission. Must run
@@ -55,6 +78,11 @@ class NotificationService {
             AndroidFlutterLocalNotificationsPlugin
           >()
           ?.requestNotificationsPermission();
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.requestFullScreenIntentPermission();
     } catch (_) {
       // Permission APIs may be unavailable in tests or unsupported platforms.
     }
@@ -103,7 +131,80 @@ class NotificationService {
     }
   }
 
+  Future<void> showIncomingCallNotification({
+    required String callId,
+    required String caller,
+    required bool isVideo,
+  }) async {
+    try {
+      await init();
+      final notificationId = _activeCallNotifications.putIfAbsent(
+        callId,
+        () => _notificationId++,
+      );
+      await _plugin.show(
+        notificationId,
+        'Incoming ${isVideo ? 'video' : 'voice'} call',
+        '$caller is calling you',
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            _callChannelId,
+            'Calls',
+            channelDescription: 'Incoming call alerts',
+            importance: Importance.max,
+            priority: Priority.max,
+            playSound: false,
+            category: AndroidNotificationCategory.call,
+            ongoing: true,
+            autoCancel: false,
+            fullScreenIntent: true,
+            actions: <AndroidNotificationAction>[
+              AndroidNotificationAction(
+                acceptCallAction,
+                'Accept',
+                showsUserInterface: true,
+                cancelNotification: false,
+              ),
+              AndroidNotificationAction(
+                declineCallAction,
+                'Decline',
+                showsUserInterface: true,
+                cancelNotification: false,
+              ),
+            ],
+          ),
+        ),
+        payload: callId,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> dismissIncomingCall(String callId) async {
+    final notificationId = _activeCallNotifications.remove(callId);
+    if (notificationId == null) return;
+    try {
+      await _plugin.cancel(notificationId);
+    } catch (_) {}
+  }
+
+  void _onNotificationResponse(NotificationResponse response) {
+    final callId = response.payload;
+    final action = response.actionId;
+    if (callId == null || callId.isEmpty || action == null) return;
+    if (action == acceptCallAction || action == declineCallAction) {
+      _callActionController.add(CallNotificationAction(callId, action));
+    }
+  }
+
   void dispose() {
     _audioPlayer?.dispose();
+    _callActionController.close();
   }
+}
+
+class CallNotificationAction {
+  const CallNotificationAction(this.callId, this.actionId);
+
+  final String callId;
+  final String actionId;
 }

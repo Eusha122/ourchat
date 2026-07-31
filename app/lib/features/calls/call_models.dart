@@ -8,9 +8,8 @@ enum CallKind {
 
   String get label => this == CallKind.video ? 'Video call' : 'Voice call';
 
-  static CallKind fromWire(String value) => value == 'audio'
-      ? CallKind.audio
-      : CallKind.video;
+  static CallKind fromWire(String value) =>
+      value == 'audio' ? CallKind.audio : CallKind.video;
 }
 
 class CallOffer {
@@ -24,13 +23,13 @@ class CallOffer {
   });
 
   factory CallOffer.fromJson(Map<String, dynamic> json) => CallOffer(
-        callId: json['callId'] as String,
-        conversationId: json['conversationId'] as String,
-        kind: CallKind.fromWire(json['kind'] as String),
-        offerType: (json['offer'] as Map<String, dynamic>)['type'] as String,
-        offerSdp: (json['offer'] as Map<String, dynamic>)['sdp'] as String,
-        caller: PostAuthor.fromJson(json['caller'] as Map<String, dynamic>),
-      );
+    callId: json['callId'] as String,
+    conversationId: json['conversationId'] as String,
+    kind: CallKind.fromWire(json['kind'] as String),
+    offerType: (json['offer'] as Map<String, dynamic>)['type'] as String,
+    offerSdp: (json['offer'] as Map<String, dynamic>)['sdp'] as String,
+    caller: PostAuthor.fromJson(json['caller'] as Map<String, dynamic>),
+  );
 
   final String callId;
   final String conversationId;
@@ -89,9 +88,9 @@ class CallEndedEvent {
   const CallEndedEvent({required this.callId, required this.reason});
 
   factory CallEndedEvent.fromJson(Map<String, dynamic> json) => CallEndedEvent(
-        callId: json['callId'] as String,
-        reason: json['reason'] as String? ?? 'ended',
-      );
+    callId: json['callId'] as String,
+    reason: json['reason'] as String? ?? 'ended',
+  );
 
   final String callId;
   final String reason;

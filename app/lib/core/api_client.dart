@@ -7,8 +7,15 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 /// network (10.0.2.2 only works for the emulator, not a real phone).
 /// Update this if the dev machine's IP changes.
 const _devMachineLanIp = '192.168.0.100';
+const _configuredApiBaseUrl = String.fromEnvironment('API_BASE_URL');
 
 String get apiBaseUrl {
+  // Production APKs must be built with, for example:
+  // --dart-define=API_BASE_URL=https://api.your-domain.example
+  // Keeping the local fallback preserves the existing Windows/phone workflow.
+  if (_configuredApiBaseUrl.trim().isNotEmpty) {
+    return _configuredApiBaseUrl.replaceFirst(RegExp(r'/+$'), '');
+  }
   if (!kIsWeb && Platform.isAndroid) {
     return 'http://$_devMachineLanIp:4000';
   }
