@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -14,8 +16,17 @@ import '../widgets/link_message_card.dart';
 const _ink = Color(0xFF1B1B1B);
 const _muted = Color(0xFF8A8A8A);
 const _purple = Color(0xFF5D4EF5);
-const _purpleLight = Color(0xFF6C63FF);
+
+// Canvas
+const _canvasBase = Color(0xFF5B4CF5);
+const _canvasOverlay = Color(0xFF6F63FF);
+
+// Send button
+const _sendTop = Color(0xFF7568FF);
+const _sendBottom = Color(0xFF5648F5);
+
 const _motion = Duration(milliseconds: 250);
+const _ease = Curves.easeInOutCubic;
 
 void _showComingSoon(BuildContext context, String feature) {
   ScaffoldMessenger.of(
@@ -152,34 +163,30 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         : '@${other.username}';
 
     return Scaffold(
-      backgroundColor: _purple,
+      backgroundColor: _canvasBase,
       resizeToAvoidBottomInset: true,
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [_purpleLight, _purple],
+      body: Stack(
+        children: [
+          const Positioned.fill(child: _PremiumCanvas()),
+          Column(
+            children: [
+              _ConversationHeader(
+                name: name,
+                avatarUrl: other.avatarUrl,
+                isTyping: _otherIsTyping,
+              ),
+              Expanded(child: _buildMessages()),
+              _Composer(
+                controller: _textController,
+                isSending: _isSending,
+                onSend: _send,
+                onTypingChanged: (value) => ref
+                    .read(socketServiceProvider)
+                    ?.sendTyping(widget.conversationId, value.isNotEmpty),
+              ),
+            ],
           ),
-        ),
-        child: Column(
-          children: [
-            _ConversationHeader(
-              name: name,
-              avatarUrl: other.avatarUrl,
-              isTyping: _otherIsTyping,
-            ),
-            Expanded(child: _buildMessages()),
-            _Composer(
-              controller: _textController,
-              isSending: _isSending,
-              onSend: _send,
-              onTypingChanged: (value) => ref
-                  .read(socketServiceProvider)
-                  ?.sendTyping(widget.conversationId, value.isNotEmpty),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -213,11 +220,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   fontFamily: 'Poppins',
                   color: Colors.white,
                   fontSize: 12.5,
-                  height: 1.4,
+                  height: 1.45,
                 ),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 18),
             _TextAction(label: 'Retry', onTap: _load),
           ],
         ),
@@ -233,30 +240,187 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       controller: _scrollController,
       reverse: true,
       physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(22, 24, 22, 12),
+      padding: const EdgeInsets.fromLTRB(22, 26, 22, 14),
       itemCount: _messages.length,
       itemBuilder: (context, index) {
         final message = _messages[index];
         final isMine = message.sender.id == myId;
 
         if (message.type == MessageType.link) {
-          return Align(
-            alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 5),
-              child: LinkMessageCard(message: message, isMine: isMine),
+          return _Appear(
+            child: Align(
+              alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: LinkMessageCard(message: message, isMine: isMine),
+              ),
             ),
           );
         }
 
-        return _Bubble(text: message.text ?? '', mine: isMine);
+        return _Appear(
+          child: _Bubble(text: message.text ?? '', mine: isMine),
+        );
       },
     );
   }
 }
 
-/// White header card with softly rounded bottom corners, floating on the
-/// purple conversation canvas.
+// ─────────────────────────────────────────────────────────────
+// Background
+// ─────────────────────────────────────────────────────────────
+
+/// Layered purple canvas: base gradient, warm overlay, radial top light,
+/// soft vignette and a whisper of surface noise so it never reads as flat.
+class _PremiumCanvas extends StatelessWidget {
+  const _PremiumCanvas();
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topRight,
+              end: Alignment.bottomLeft,
+              colors: [_canvasOverlay, _canvasBase],
+            ),
+          ),
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+              center: const Alignment(0.05, -0.85),
+              radius: 1.05,
+              colors: [
+                Colors.white.withValues(alpha: 0.17),
+                Colors.white.withValues(alpha: 0.0),
+              ],
+              stops: const [0.0, 1.0],
+            ),
+          ),
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+              center: Alignment.center,
+              radius: 1.15,
+              colors: [
+                const Color(0xFF2A1F7A).withValues(alpha: 0.0),
+                const Color(0xFF251B70).withValues(alpha: 0.22),
+              ],
+              stops: const [0.5, 1.0],
+            ),
+          ),
+        ),
+        const Opacity(
+          opacity: 0.6,
+          child: CustomPaint(painter: _NoisePainter()),
+        ),
+      ],
+    );
+  }
+}
+
+class _NoisePainter extends CustomPainter {
+  const _NoisePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Fixed seed keeps the grain stable between frames.
+    final random = math.Random(7);
+    final light = Paint()..color = Colors.white.withValues(alpha: 0.030);
+    final dark = Paint()..color = const Color(0xFF1B1240).withValues(alpha: 0.030);
+
+    for (var i = 0; i < 900; i++) {
+      final dx = random.nextDouble() * size.width;
+      final dy = random.nextDouble() * size.height;
+      canvas.drawCircle(
+        Offset(dx, dy),
+        random.nextDouble() * 0.9 + 0.3,
+        random.nextBool() ? light : dark,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Header
+// ─────────────────────────────────────────────────────────────
+
+/// Builds the header silhouette: a soft 22px shoulder on the left and a long
+/// organic sweep on the right, so the purple canvas flows up into the corner
+/// instead of meeting a symmetric rounded rectangle.
+Path _headerPath(Size size) {
+  final w = size.width;
+  final h = size.height;
+  return Path()
+    ..moveTo(0, 0)
+    ..lineTo(w, 0)
+    ..lineTo(w, h - 58)
+    ..cubicTo(w, h - 14, w - 15, h, w - 58, h)
+    ..lineTo(24, h)
+    ..quadraticBezierTo(0, h, 0, h - 24)
+    ..close();
+}
+
+class _HeaderPainter extends CustomPainter {
+  const _HeaderPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = _headerPath(size);
+
+    // Layered ambient shadows — no Material elevation anywhere.
+    canvas.save();
+    canvas.translate(0, 18);
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = const Color(0xFF241C5E).withValues(alpha: 0.16)
+        ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 25),
+    );
+    canvas.restore();
+
+    canvas.save();
+    canvas.translate(0, 8);
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = const Color(0xFF241C5E).withValues(alpha: 0.10)
+        ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 11),
+    );
+    canvas.restore();
+
+    canvas.drawPath(path, Paint()..color = Colors.white);
+
+    // Whisper of a warm inner sheen along the bottom curve.
+    canvas.save();
+    canvas.clipPath(path);
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = ui.Gradient.linear(
+          Offset(0, size.height * 0.55),
+          Offset(0, size.height),
+          [
+            Colors.white.withValues(alpha: 0.0),
+            const Color(0xFFF3F1FF).withValues(alpha: 0.85),
+          ],
+        ),
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
 class _ConversationHeader extends StatelessWidget {
   const _ConversationHeader({
     required this.name,
@@ -271,123 +435,142 @@ class _ConversationHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const placeholder = ColoredBox(
-      color: Color(0xFFECE9FF),
+      color: Color(0xFFEFECFF),
       child: Icon(Icons.person_rounded, color: _purple, size: 22),
     );
 
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(bottom: Radius.circular(30)),
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x1F2B2468),
-            blurRadius: 40,
-            offset: Offset(0, 14),
-          ),
-          BoxShadow(
-            color: Color(0x0F2B2468),
-            blurRadius: 16,
-            offset: Offset(0, 5),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: SizedBox(
-          height: 72,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 0, 22, 0),
-            child: Row(
-              children: [
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => Navigator.of(context).maybePop(),
-                  child: const SizedBox(
-                    width: 34,
-                    height: 44,
-                    child: Icon(
-                      Icons.arrow_back_rounded,
-                      color: _ink,
-                      size: 21,
+    final topPad = MediaQuery.paddingOf(context).top;
+    const contentHeight = 76.0;
+    const tail = 22.0;
+
+    return SizedBox(
+      height: topPad + contentHeight + tail,
+      child: Stack(
+        children: [
+          const Positioned.fill(child: CustomPaint(painter: _HeaderPainter())),
+          Positioned(
+            top: topPad,
+            left: 0,
+            right: 0,
+            height: contentHeight,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 22, 0),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => Navigator.of(context).maybePop(),
+                    child: const SizedBox(
+                      width: 36,
+                      height: 48,
+                      child: Center(
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CustomPaint(painter: _BackArrowPainter()),
+                        ),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 4),
-                SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: ClipOval(
-                    child: avatarUrl == null
-                        ? placeholder
-                        : CachedNetworkImage(
-                            imageUrl: avatarUrl!,
-                            fit: BoxFit.cover,
-                            errorWidget: (_, _, _) => placeholder,
-                          ),
-                  ),
-                ),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontFamily: 'Poppins',
-                          color: _ink,
-                          fontSize: 14.5,
-                          height: 1.25,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: -0.2,
+                  const SizedBox(width: 4),
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF2B2468).withValues(alpha: 0.16),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
                         ),
-                      ),
-                      const SizedBox(height: 1),
-                      AnimatedSwitcher(
-                        duration: _motion,
-                        switchInCurve: Curves.easeInOutCubic,
-                        switchOutCurve: Curves.easeInOutCubic,
-                        child: Text(
-                          isTyping ? 'typing...' : 'Online',
-                          key: ValueKey(isTyping),
+                        BoxShadow(
+                          color: const Color(0xFF2B2468).withValues(alpha: 0.06),
+                          blurRadius: 5,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: ClipOval(
+                      child: avatarUrl == null
+                          ? placeholder
+                          : CachedNetworkImage(
+                              imageUrl: avatarUrl!,
+                              fit: BoxFit.cover,
+                              errorWidget: (_, _, _) => placeholder,
+                            ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             fontFamily: 'Poppins',
-                            color: _muted,
-                            fontSize: 10,
-                            height: 1.2,
-                            fontWeight: FontWeight.w400,
+                            color: _ink,
+                            fontSize: 14.5,
+                            height: 1.25,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: -0.25,
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 2),
+                        AnimatedSwitcher(
+                          duration: _motion,
+                          switchInCurve: _ease,
+                          switchOutCurve: _ease,
+                          child: Text(
+                            isTyping ? 'typing…' : 'Online',
+                            key: ValueKey(isTyping),
+                            style: const TextStyle(
+                              fontFamily: 'Poppins',
+                              color: _muted,
+                              fontSize: 10,
+                              height: 1.2,
+                              fontWeight: FontWeight.w400,
+                              letterSpacing: 0.1,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                _OutlineCircleButton(
-                  icon: Icons.videocam_outlined,
-                  onTap: () => _showComingSoon(context, 'Video calls'),
-                ),
-                const SizedBox(width: 10),
-                _OutlineCircleButton(
-                  icon: Icons.call_outlined,
-                  onTap: () => _showComingSoon(context, 'Voice calls'),
-                ),
-              ],
+                  _OutlineCircleButton(
+                    painter: const _VideoIconPainter(),
+                    semanticLabel: 'Video call',
+                    onTap: () => _showComingSoon(context, 'Video calls'),
+                  ),
+                  const SizedBox(width: 11),
+                  _OutlineCircleButton(
+                    painter: const _PhoneIconPainter(),
+                    semanticLabel: 'Voice call',
+                    onTap: () => _showComingSoon(context, 'Voice calls'),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
 }
 
 class _OutlineCircleButton extends StatefulWidget {
-  const _OutlineCircleButton({required this.icon, required this.onTap});
+  const _OutlineCircleButton({
+    required this.painter,
+    required this.semanticLabel,
+    required this.onTap,
+  });
 
-  final IconData icon;
+  final CustomPainter painter;
+  final String semanticLabel;
   final VoidCallback onTap;
 
   @override
@@ -399,30 +582,71 @@ class _OutlineCircleButtonState extends State<_OutlineCircleButton> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapCancel: () => setState(() => _pressed = false),
-      onTapUp: (_) {
-        setState(() => _pressed = false);
-        widget.onTap();
-      },
-      child: AnimatedScale(
-        scale: _pressed ? 0.92 : 1,
-        duration: _motion,
-        curve: Curves.easeInOutCubic,
-        child: Container(
-          width: 37,
-          height: 37,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-            border: Border.all(color: _ink, width: 1.2),
+    return Semantics(
+      button: true,
+      label: widget.semanticLabel,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTapUp: (_) {
+          setState(() => _pressed = false);
+          widget.onTap();
+        },
+        child: AnimatedScale(
+          scale: _pressed ? 0.92 : 1,
+          duration: _motion,
+          curve: _ease,
+          child: Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: const Color(0xFF1B1B1B).withValues(alpha: 0.88),
+                width: 1.1,
+              ),
+            ),
+            child: SizedBox(
+              width: 20,
+              height: 20,
+              child: CustomPaint(painter: widget.painter),
+            ),
           ),
-          child: Icon(widget.icon, color: _ink, size: 17),
         ),
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Bubbles
+// ─────────────────────────────────────────────────────────────
+
+/// Fade + rise + settle as a bubble enters the list.
+class _Appear extends StatelessWidget {
+  const _Appear({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: _motion,
+      curve: _ease,
+      builder: (context, t, child) {
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, (1 - t) * 10),
+            child: Transform.scale(scale: 0.965 + 0.035 * t, child: child),
+          ),
+        );
+      },
+      child: child,
     );
   }
 }
@@ -435,35 +659,96 @@ class _Bubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final maxWidth = MediaQuery.sizeOf(context).width * 0.74;
+    const radius = BorderRadius.all(Radius.circular(26));
+
+    final label = Text(
+      text,
+      style: TextStyle(
+        fontFamily: 'Poppins',
+        color: mine ? const Color(0xFF241F3D) : Colors.white,
+        fontSize: 12.5,
+        height: 1.48,
+        fontWeight: FontWeight.w400,
+        letterSpacing: -0.05,
+      ),
+    );
+
+    if (mine) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          margin: const EdgeInsets.symmetric(vertical: 5),
+          padding: const EdgeInsets.fromLTRB(18, 13, 18, 14),
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFFFFFFFF), Color(0xFFF6F5FF)],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF1E1550).withValues(alpha: 0.18),
+                blurRadius: 50,
+                offset: const Offset(0, 18),
+              ),
+              BoxShadow(
+                color: const Color(0xFF1E1550).withValues(alpha: 0.10),
+                blurRadius: 22,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: label,
+        ),
+      );
+    }
+
     return Align(
-      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      alignment: Alignment.centerLeft,
       child: Container(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.72,
-        ),
+        constraints: BoxConstraints(maxWidth: maxWidth),
         margin: const EdgeInsets.symmetric(vertical: 5),
-        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
         decoration: BoxDecoration(
-          color: mine ? Colors.white : Colors.white.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: mine
-              ? [
-                  BoxShadow(
-                    color: const Color(0xFF2B2468).withValues(alpha: 0.10),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ]
-              : null,
+          borderRadius: radius,
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF1C1250).withValues(alpha: 0.20),
+              blurRadius: 40,
+              offset: const Offset(0, 16),
+            ),
+            BoxShadow(
+              color: const Color(0xFF1C1250).withValues(alpha: 0.10),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
         ),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontFamily: 'Poppins',
-            color: mine ? const Color(0xFF2A2438) : Colors.white,
-            fontSize: 12,
-            height: 1.4,
-            fontWeight: FontWeight.w400,
+        child: ClipRRect(
+          borderRadius: radius,
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(18, 13, 18, 14),
+              decoration: BoxDecoration(
+                borderRadius: radius,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.white.withValues(alpha: 0.26),
+                    Colors.white.withValues(alpha: 0.15),
+                  ],
+                ),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.22),
+                  width: 1,
+                ),
+              ),
+              child: label,
+            ),
           ),
         ),
       ),
@@ -471,7 +756,11 @@ class _Bubble extends StatelessWidget {
   }
 }
 
-class _Composer extends StatelessWidget {
+// ─────────────────────────────────────────────────────────────
+// Composer
+// ─────────────────────────────────────────────────────────────
+
+class _Composer extends StatefulWidget {
   const _Composer({
     required this.controller,
     required this.isSending,
@@ -485,30 +774,65 @@ class _Composer extends StatelessWidget {
   final ValueChanged<String> onTypingChanged;
 
   @override
+  State<_Composer> createState() => _ComposerState();
+}
+
+class _ComposerState extends State<_Composer> {
+  final _focusNode = FocusNode();
+  bool _focused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(() {
+      if (_focusNode.hasFocus != _focused) {
+        setState(() => _focused = _focusNode.hasFocus);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 18),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
-              child: Container(
-                constraints: const BoxConstraints(minHeight: 52),
+              child: AnimatedContainer(
+                duration: _motion,
+                curve: _ease,
+                constraints: const BoxConstraints(minHeight: 64),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(26),
+                  borderRadius: BorderRadius.circular(32),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xFFFFFFFF), Color(0xFFFAF9FF)],
+                  ),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.9),
+                    width: 1,
+                  ),
                   boxShadow: [
                     BoxShadow(
-                      color: const Color(0xFF2B2468).withValues(alpha: 0.12),
-                      blurRadius: 26,
-                      offset: const Offset(0, 10),
+                      color: const Color(0xFF1E1550)
+                          .withValues(alpha: _focused ? 0.22 : 0.16),
+                      blurRadius: 50,
+                      offset: const Offset(0, 18),
                     ),
                     BoxShadow(
-                      color: const Color(0xFF2B2468).withValues(alpha: 0.06),
-                      blurRadius: 10,
-                      offset: const Offset(0, 3),
+                      color: const Color(0xFF1E1550).withValues(alpha: 0.08),
+                      blurRadius: 22,
+                      offset: const Offset(0, 8),
                     ),
                   ],
                 ),
@@ -516,54 +840,62 @@ class _Composer extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(10, 0, 0, 10),
+                      padding: const EdgeInsets.fromLTRB(11, 0, 0, 13),
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onTap: () => _showComingSoon(context, 'Voice messages'),
                         child: Container(
-                          width: 32,
-                          height: 32,
+                          width: 38,
+                          height: 38,
                           alignment: Alignment.center,
                           decoration: const BoxDecoration(
-                            color: Color(0xFFF0EFFC),
                             shape: BoxShape.circle,
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [Color(0xFFF3F1FF), Color(0xFFEBE8FF)],
+                            ),
                           ),
-                          child: const Icon(
-                            Icons.mic_rounded,
-                            color: _purple,
-                            size: 16,
+                          child: const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CustomPaint(painter: _MicIconPainter()),
                           ),
                         ),
                       ),
                     ),
                     Expanded(
                       child: TextField(
-                        controller: controller,
+                        controller: widget.controller,
+                        focusNode: _focusNode,
                         minLines: 1,
                         maxLines: 4,
                         cursorColor: _purple,
+                        cursorWidth: 1.6,
+                        cursorRadius: const Radius.circular(2),
                         style: const TextStyle(
                           fontFamily: 'Poppins',
                           color: _ink,
-                          fontSize: 12,
-                          height: 1.35,
+                          fontSize: 12.5,
+                          height: 1.4,
                           fontWeight: FontWeight.w400,
                         ),
-                        onChanged: onTypingChanged,
+                        onChanged: widget.onTypingChanged,
                         decoration: const InputDecoration(
                           isDense: true,
                           filled: false,
                           hintText: 'Type a message',
                           hintStyle: TextStyle(
                             fontFamily: 'Poppins',
-                            color: Color(0xFF9A9AA5),
-                            fontSize: 12,
+                            color: Color(0xFFA5A2B8),
+                            fontSize: 12.5,
                             fontWeight: FontWeight.w400,
+                            letterSpacing: 0.1,
                           ),
                           border: InputBorder.none,
                           enabledBorder: InputBorder.none,
                           focusedBorder: InputBorder.none,
-                          contentPadding: EdgeInsets.fromLTRB(10, 17, 0, 17),
+                          contentPadding: EdgeInsets.fromLTRB(12, 23, 0, 23),
                         ),
                       ),
                     ),
@@ -571,12 +903,14 @@ class _Composer extends StatelessWidget {
                       behavior: HitTestBehavior.opaque,
                       onTap: () => _showComingSoon(context, 'Attachments'),
                       child: const SizedBox(
-                        width: 44,
-                        height: 52,
-                        child: Icon(
-                          Icons.attachment_rounded,
-                          color: Color(0xFF9A9AA5),
-                          size: 18,
+                        width: 48,
+                        height: 64,
+                        child: Center(
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CustomPaint(painter: _ClipIconPainter()),
+                          ),
                         ),
                       ),
                     ),
@@ -584,8 +918,8 @@ class _Composer extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 10),
-            _SendButton(isSending: isSending, onPressed: onSend),
+            const SizedBox(width: 12),
+            _SendButton(isSending: widget.isSending, onPressed: widget.onSend),
           ],
         ),
       ),
@@ -593,6 +927,7 @@ class _Composer extends StatelessWidget {
   }
 }
 
+/// Polished glass send button — the focal point of the screen.
 class _SendButton extends StatefulWidget {
   const _SendButton({required this.isSending, required this.onPressed});
 
@@ -608,67 +943,265 @@ class _SendButtonState extends State<_SendButton> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapCancel: () => setState(() => _pressed = false),
-      onTapUp: (_) {
-        setState(() => _pressed = false);
-        if (!widget.isSending) widget.onPressed();
-      },
-      child: AnimatedScale(
-        scale: _pressed ? 0.92 : 1,
-        duration: _motion,
-        curve: Curves.easeInOutCubic,
-        child: Container(
-          width: 52,
-          height: 52,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF2B2468).withValues(alpha: 0.12),
-                blurRadius: 26,
-                offset: const Offset(0, 10),
-              ),
-              BoxShadow(
-                color: const Color(0xFF2B2468).withValues(alpha: 0.06),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: AnimatedSwitcher(
+    return Semantics(
+      button: true,
+      label: 'Send message',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTapUp: (_) {
+          setState(() => _pressed = false);
+          if (!widget.isSending) widget.onPressed();
+        },
+        child: AnimatedScale(
+          scale: _pressed ? 0.94 : 1,
+          duration: _pressed
+              ? const Duration(milliseconds: 120)
+              : const Duration(milliseconds: 420),
+          curve: _pressed ? Curves.easeOut : Curves.elasticOut,
+          child: AnimatedContainer(
             duration: _motion,
-            child: widget.isSending
-                ? const SizedBox(
-                    key: ValueKey('sending'),
-                    width: 8,
-                    height: 8,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: _purple,
-                        shape: BoxShape.circle,
+            curve: _ease,
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [_sendTop, _sendBottom],
+              ),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.20),
+                width: 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF3A2BC9)
+                      .withValues(alpha: _pressed ? 0.28 : 0.46),
+                  blurRadius: _pressed ? 18 : 30,
+                  offset: Offset(0, _pressed ? 7 : 16),
+                ),
+                BoxShadow(
+                  color: const Color(0xFF1E1550)
+                      .withValues(alpha: _pressed ? 0.10 : 0.18),
+                  blurRadius: 14,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // Top highlight, like light catching polished glass.
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        center: const Alignment(-0.15, -0.65),
+                        radius: 0.85,
+                        colors: [
+                          Colors.white.withValues(alpha: 0.38),
+                          Colors.white.withValues(alpha: 0.0),
+                        ],
                       ),
                     ),
-                  )
-                : const Padding(
-                    key: ValueKey('send'),
-                    padding: EdgeInsets.only(left: 3),
-                    child: Icon(
-                      Icons.play_arrow_rounded,
-                      color: _purple,
-                      size: 26,
-                    ),
                   ),
+                ),
+                AnimatedSwitcher(
+                  duration: _motion,
+                  switchInCurve: _ease,
+                  switchOutCurve: _ease,
+                  child: widget.isSending
+                      ? const SizedBox(
+                          key: ValueKey('sending'),
+                          width: 9,
+                          height: 9,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        )
+                      : const Padding(
+                          key: ValueKey('send'),
+                          padding: EdgeInsets.only(left: 3),
+                          child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CustomPaint(painter: _SendArrowPainter()),
+                          ),
+                        ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+// Thin custom icons
+// ─────────────────────────────────────────────────────────────
+
+Paint _stroke(Color color, [double width = 1.5]) => Paint()
+  ..color = color
+  ..strokeWidth = width
+  ..style = PaintingStyle.stroke
+  ..strokeCap = StrokeCap.round
+  ..strokeJoin = StrokeJoin.round;
+
+class _BackArrowPainter extends CustomPainter {
+  const _BackArrowPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = _stroke(_ink, 1.7);
+    canvas.drawLine(const Offset(4.0, 10), const Offset(16.5, 10), p);
+    canvas.drawPath(
+      Path()
+        ..moveTo(9.6, 4.6)
+        ..lineTo(4.0, 10)
+        ..lineTo(9.6, 15.4),
+      p,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _VideoIconPainter extends CustomPainter {
+  const _VideoIconPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = _stroke(_ink, 1.4);
+    canvas.drawRRect(
+      RRect.fromLTRBR(2.2, 6.0, 13.0, 14.6, const Radius.circular(2.8)),
+      p,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(17.6, 6.9)
+        ..lineTo(13.6, 9.4)
+        ..lineTo(13.6, 11.2)
+        ..lineTo(17.6, 13.7)
+        ..close(),
+      p,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _PhoneIconPainter extends CustomPainter {
+  const _PhoneIconPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = _stroke(_ink, 1.4);
+    canvas.drawPath(
+      Path()
+        ..moveTo(6.6, 3.1)
+        ..quadraticBezierTo(4.5, 3.0, 3.9, 5.0)
+        ..cubicTo(2.9, 10.4, 9.1, 16.9, 14.7, 16.2)
+        ..quadraticBezierTo(16.8, 15.9, 16.7, 13.8)
+        ..lineTo(16.6, 12.5)
+        ..quadraticBezierTo(16.5, 11.7, 15.7, 11.6)
+        ..lineTo(13.3, 11.2)
+        ..quadraticBezierTo(12.6, 11.1, 12.2, 11.7)
+        ..lineTo(11.4, 12.8)
+        ..cubicTo(9.7, 11.9, 8.2, 10.4, 7.3, 8.6)
+        ..lineTo(8.4, 7.8)
+        ..quadraticBezierTo(9.0, 7.4, 8.9, 6.7)
+        ..lineTo(8.5, 4.3)
+        ..quadraticBezierTo(8.4, 3.5, 7.6, 3.4)
+        ..close(),
+      p,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _MicIconPainter extends CustomPainter {
+  const _MicIconPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = _stroke(_purple, 1.5);
+    canvas.drawRRect(
+      RRect.fromLTRBR(7.3, 2.4, 12.7, 11.4, const Radius.circular(2.7)),
+      p,
+    );
+    canvas.drawArc(
+      const Rect.fromLTRB(4.6, 6.2, 15.4, 15.4),
+      0,
+      math.pi,
+      false,
+      p,
+    );
+    canvas.drawLine(const Offset(10, 13.6), const Offset(10, 17.2), p);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _ClipIconPainter extends CustomPainter {
+  const _ClipIconPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = _stroke(const Color(0xFFA5A2B8), 1.5);
+    canvas.drawPath(
+      Path()
+        ..moveTo(14.3, 6.6)
+        ..lineTo(7.6, 13.3)
+        ..quadraticBezierTo(6.1, 14.8, 7.5, 16.1)
+        ..quadraticBezierTo(8.9, 17.4, 10.4, 15.9)
+        ..lineTo(16.4, 9.9)
+        ..quadraticBezierTo(18.9, 7.4, 16.3, 4.9)
+        ..quadraticBezierTo(13.7, 2.4, 11.2, 4.9)
+        ..lineTo(5.0, 11.1),
+      p,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _SendArrowPainter extends CustomPainter {
+  const _SendArrowPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..moveTo(6.0, 3.6)
+      ..lineTo(16.6, 11.0)
+      ..lineTo(6.0, 18.4)
+      ..close();
+    // Fill plus a matching round-joined stroke softens the triangle's points.
+    canvas.drawPath(path, Paint()..color = Colors.white);
+    canvas.drawPath(path, _stroke(Colors.white, 3.2));
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// ─────────────────────────────────────────────────────────────
+// States
+// ─────────────────────────────────────────────────────────────
 
 class _TextAction extends StatelessWidget {
   const _TextAction({required this.label, required this.onTap});
@@ -681,10 +1214,17 @@ class _TextAction extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 11),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 13),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(26),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF1E1550).withValues(alpha: 0.20),
+              blurRadius: 40,
+              offset: const Offset(0, 14),
+            ),
+          ],
         ),
         child: Text(
           label,
@@ -714,19 +1254,30 @@ class _EmptyConversation extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 62,
-              height: 62,
+              width: 66,
+              height: 66,
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.16),
                 shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.18),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.22),
+                  width: 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF1C1250).withValues(alpha: 0.18),
+                    blurRadius: 34,
+                    offset: const Offset(0, 14),
+                  ),
+                ],
               ),
               child: const Icon(
                 Icons.waving_hand_rounded,
                 color: Colors.white,
-                size: 26,
+                size: 27,
               ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 20),
             Text(
               'Say hi to @$name',
               textAlign: TextAlign.center,
@@ -735,17 +1286,18 @@ class _EmptyConversation extends StatelessWidget {
                 color: Colors.white,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
+                letterSpacing: -0.2,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'This is the start of your conversation.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily: 'Poppins',
-                color: Colors.white70,
+                color: Colors.white.withValues(alpha: 0.72),
                 fontSize: 12,
-                height: 1.4,
+                height: 1.45,
               ),
             ),
           ],
