@@ -23,7 +23,12 @@
       "Bash(grep -o '<path[^<]*</path>\\\\|path=\"[^\"]*\"' \"/c/Users/user/AppData/Local/Android/Sdk/platforms/android-37/package.xml\" 2>&1 | head -5)",
       "Read(//c/Users/user/AppData/Local/Android/Sdk/platforms/android-37/**)",
       "Bash(grep -c 'android-37.0' \"/c/Users/user/AppData/Local/Android/Sdk/platforms/android-37/package.xml\")",
-      "Bash(sed -i 's/platforms;android-37\\\\.0/platforms;android-37/' \"/c/Users/user/AppData/Local/Android/Sdk/platforms/android-37/package.xml\")"
+      "Bash(sed -i 's/platforms;android-37\\\\.0/platforms;android-37/' \"/c/Users/user/AppData/Local/Android/Sdk/platforms/android-37/package.xml\")",
+      "PowerShell(New-NetFirewallRule -DisplayName \"OurChat Backend Dev \\(4000\\)\" -Direction Inbound -Protocol TCP -LocalPort 4000 -Action Allow -Profile Any -ErrorAction Stop)",
+      "PowerShell(& \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" shell \"nc -zv -w 5 192.168.0.100 4000\")",
+      "PowerShell(& \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" shell \"nc -z -w 5 192.168.0.100 4000 && echo OPEN || echo CLOSED_OR_FILTERED\")",
+      "PowerShell(Get-Process | Where-Object { $_.ProcessName -match \"dart|java|gradle\" } | Select-Object Id, ProcessName, StartTime)",
+      "PowerShell(Get-Process -Id 43768,41444,43260 -ErrorAction SilentlyContinue)"
     ]
   }
 }
