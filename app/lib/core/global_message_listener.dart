@@ -53,6 +53,10 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
   void _onMessage(ChatMessage message) {
     final myId = ref.read(authControllerProvider).value?.user?.id;
     if (message.sender.id == myId) return; // our own echoed message
+    if (ref.read(socketServiceProvider)?.isMessageMuted(message.conversationId) ??
+        false) {
+      return;
+    }
 
     final sender = message.sender;
     final name = sender.displayName?.isNotEmpty == true

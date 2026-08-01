@@ -80,9 +80,10 @@ void main() {
 
     await _tapTab(tester, 'Gallery');
 
-    // Gallery is currently a static "coming soon" placeholder (no network
-    // call), so this just proves navigation to the tab worked.
-    expect(find.text('Gallery is coming soon'), findsOneWidget);
+    // Same reasoning as the Chats tab test above: no network access in the
+    // harness, so fetching albums fails and the error state's Retry button
+    // is what proves navigation to the tab actually worked.
+    expect(find.text('Retry'), findsOneWidget);
   });
 
   testWidgets('Profile tab shows the user and toggles the edit form', (

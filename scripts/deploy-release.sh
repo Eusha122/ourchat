@@ -44,11 +44,20 @@ echo "==> Uploading APK"
 scp -q -i "$SSH_KEY" "$APK_PATH" "$SSH_HOST:/tmp/ourchat.apk"
 
 echo "==> Publishing and announcing versionCode $VERSION_CODE"
+# Base64'd rather than interpolated into the remote command string directly —
+# an apostrophe (or any other shell-special character) in free-text release
+# notes previously broke the quoting and aborted the deploy mid-way.
+RELEASE_NOTES_B64="$(printf '%s' "$RELEASE_NOTES" | base64 -w0)"
 ssh -i "$SSH_KEY" "$SSH_HOST" \
-  "VERSION_CODE='$VERSION_CODE' RELEASE_NOTES='$RELEASE_NOTES' bash -s" <<'REMOTE'
+  "VERSION_CODE='$VERSION_CODE' RELEASE_NOTES_B64='$RELEASE_NOTES_B64' bash -s" <<'REMOTE'
 set -euo pipefail
 sudo mv /tmp/ourchat.apk /var/www/ourchat/downloads/ourchat.apk
 sudo chown www-data:www-data /var/www/ourchat/downloads/ourchat.apk
+
+# Stripped of double-quotes and newlines rather than escaped: release notes
+# are short marketing text, and this sidesteps ever having to match dotenv's
+# exact unescaping rules for a value that isn't worth the risk.
+RELEASE_NOTES="$(printf '%s' "$RELEASE_NOTES_B64" | base64 -d | tr -d '"\n\r')"
 
 # Rewrite the keys outright rather than substituting the previous value, so
 # this stays correct no matter what the file currently says.

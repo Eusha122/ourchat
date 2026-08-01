@@ -67,6 +67,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   StreamSubscription<TypingEvent>? _typingSub;
   StreamSubscription<PresenceEvent>? _presenceSub;
   StreamSubscription<ConversationReadEvent>? _readSub;
+  StreamSubscription<String>? _deletedSub;
   Timer? _typingResetTimer;
   DateTime? _otherLastReadAt;
   bool _isLoading = true;
@@ -112,6 +113,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
               event.userId == widget.otherParticipant.id,
         )
         .listen(_onConversationRead);
+    // Covers deletion by either side while this screen is open — there's
+    // nothing left to show, so leave rather than let further taps 404.
+    _deletedSub = socket?.onConversationDeleted
+        .where((id) => id == widget.conversationId)
+        .listen((_) => _onConversationDeleted());
     _markRead();
     // Marks this conversation as "open" so the global listener doesn't pop
     // a banner/sound for messages we're already looking at.
@@ -134,6 +140,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     _typingSub?.cancel();
     _presenceSub?.cancel();
     _readSub?.cancel();
+    _deletedSub?.cancel();
     _typingResetTimer?.cancel();
     _textController.dispose();
     _scrollController.dispose();
@@ -215,6 +222,16 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     final current = _otherLastReadAt;
     if (current != null && !event.readAt.isAfter(current)) return;
     setState(() => _otherLastReadAt = event.readAt);
+  }
+
+  void _onConversationDeleted() {
+    if (!mounted) return;
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    if (navigator.canPop()) navigator.pop();
+    messenger.showSnackBar(
+      const SnackBar(content: Text('This conversation was deleted.')),
+    );
   }
 
   /// Clearing the unread badge must not depend on the socket round-trip, so

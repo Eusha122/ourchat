@@ -33,6 +33,25 @@ class SocketService {
   final _callReadyController = StreamController<String>.broadcast();
   final _pendingIce = <String, List<CallIceCandidate>>{};
 
+  // Kept in sync by whoever last fetched/edited the conversation list (see
+  // ChatsScreen), since this plain Dart class has no Riverpod access of its
+  // own to read that state directly.
+  Set<String> _mutedMessageConversations = const {};
+  Set<String> _mutedCallConversations = const {};
+
+  void setMutedConversations({
+    required Set<String> messages,
+    required Set<String> calls,
+  }) {
+    _mutedMessageConversations = messages;
+    _mutedCallConversations = calls;
+  }
+
+  bool isMessageMuted(String conversationId) =>
+      _mutedMessageConversations.contains(conversationId);
+  bool isCallMuted(String conversationId) =>
+      _mutedCallConversations.contains(conversationId);
+
   Stream<ChatMessage> get onMessage => _messageController.stream;
   Stream<ConversationUpdateEvent> get onConversationUpdate =>
       _conversationUpdateController.stream;
@@ -66,8 +85,9 @@ class SocketService {
       );
       _messageController.add(message);
       // Skip our own messages echoed back (e.g. when we have the
-      // conversation open and just sent it ourselves).
-      if (message.sender.id != currentUserId) {
+      // conversation open and just sent it ourselves) and muted chats.
+      if (message.sender.id != currentUserId &&
+          !isMessageMuted(message.conversationId)) {
         NotificationService().playMessageNotification();
       }
     });

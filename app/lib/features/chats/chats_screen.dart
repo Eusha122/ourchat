@@ -96,12 +96,25 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
           .fetchConversations();
       if (!mounted) return;
       setState(() => _conversations = conversations);
+      _syncMutedConversations();
     } on ConversationsApiException catch (error) {
       if (!mounted) return;
       setState(() => _error = error.message);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// Pushes the current mute state into SocketService, which is what
+  /// actually gates the live sound/banner/ringtone for muted chats.
+  void _syncMutedConversations() {
+    ref.read(socketServiceProvider)?.setMutedConversations(
+      messages: _conversations
+          .where((c) => c.mutedMessages)
+          .map((c) => c.id)
+          .toSet(),
+      calls: _conversations.where((c) => c.mutedCalls).map((c) => c.id).toSet(),
+    );
   }
 
   @override
@@ -191,6 +204,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
               mutedMessages: next,
             );
           });
+          _syncMutedConversations();
         }
         try {
           await api.setMuted(conversation.id, messages: next);
@@ -205,6 +219,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
               mutedCalls: next,
             );
           });
+          _syncMutedConversations();
         }
         try {
           await api.setMuted(conversation.id, calls: next);
@@ -825,5 +840,125 @@ class _ChatEntry {
     final minute = local.minute.toString().padLeft(2, '0');
     final suffix = local.hour < 12 ? 'AM' : 'PM';
     return '$hour:$minute $suffix';
+  }
+}
+
+/// Long-press menu: pin, mute messages, mute calls, delete.
+class _ChatMenuSheet extends StatelessWidget {
+  const _ChatMenuSheet({required this.conversation});
+
+  final Conversation conversation;
+
+  @override
+  Widget build(BuildContext context) {
+    final other = conversation.otherParticipant;
+    final name = other.displayName?.isNotEmpty == true
+        ? other.displayName!
+        : '@${other.username}';
+
+    return SafeArea(
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(28),
+        ),
+        padding: const EdgeInsets.fromLTRB(8, 20, 8, 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  color: Color(0xFF9A9AA5),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            _MenuTile(
+              icon: conversation.pinned
+                  ? Icons.push_pin_outlined
+                  : Icons.push_pin_rounded,
+              label: conversation.pinned ? 'Unpin chat' : 'Pin chat',
+              onTap: () =>
+                  Navigator.of(context).pop(_ChatMenuAction.togglePin),
+            ),
+            _MenuTile(
+              icon: conversation.mutedMessages
+                  ? Icons.notifications_rounded
+                  : Icons.notifications_off_rounded,
+              label: conversation.mutedMessages
+                  ? 'Unmute messages'
+                  : 'Mute messages',
+              onTap: () => Navigator.of(
+                context,
+              ).pop(_ChatMenuAction.toggleMuteMessages),
+            ),
+            _MenuTile(
+              icon: conversation.mutedCalls
+                  ? Icons.call_rounded
+                  : Icons.phone_disabled_rounded,
+              label: conversation.mutedCalls ? 'Unmute calls' : 'Mute calls',
+              onTap: () =>
+                  Navigator.of(context).pop(_ChatMenuAction.toggleMuteCalls),
+            ),
+            _MenuTile(
+              icon: Icons.delete_outline_rounded,
+              label: 'Delete chat',
+              destructive: true,
+              onTap: () => Navigator.of(context).pop(_ChatMenuAction.delete),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuTile extends StatelessWidget {
+  const _MenuTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = destructive ? const Color(0xFFE24C4C) : _ink;
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 16),
+            Text(
+              label,
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                color: color,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

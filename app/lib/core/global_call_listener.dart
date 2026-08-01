@@ -40,15 +40,22 @@ class _GlobalCallListenerState extends ConsumerState<GlobalCallListener> {
     final navigator = rootNavigatorKey.currentState;
     if (navigator == null) return;
     _showingCall = true;
+    final muted =
+        ref.read(socketServiceProvider)?.isCallMuted(offer.conversationId) ??
+        false;
     final name = offer.caller.displayName?.isNotEmpty == true
         ? offer.caller.displayName!
         : '@${offer.caller.username}';
-    NotificationService().showIncomingCallNotification(
-      callId: offer.callId,
-      caller: name,
-      isVideo: offer.kind == CallKind.video,
-    );
-    CallRingtoneService.instance.playIncoming();
+    // Muting a call silences the alert, not the call itself — the screen
+    // still opens so it can be answered if you happen to be looking.
+    if (!muted) {
+      NotificationService().showIncomingCallNotification(
+        callId: offer.callId,
+        caller: name,
+        isVideo: offer.kind == CallKind.video,
+      );
+      CallRingtoneService.instance.playIncoming();
+    }
     try {
       await navigator.push(
         MaterialPageRoute<void>(
