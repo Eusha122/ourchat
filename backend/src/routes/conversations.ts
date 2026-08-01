@@ -171,13 +171,19 @@ conversationsRouter.get("/", requireAuth, async (req, res) => {
             }
           : null,
         unreadCount,
+        pinned: p.pinned,
+        mutedMessages: p.mutedMessages,
+        mutedCalls: p.mutedCalls,
       };
     }),
   );
 
   const results = maybeResults.filter((entry) => entry !== null);
 
+  // Pinned chats lead regardless of activity; within each group, most
+  // recent first.
   results.sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
     const aTime = a.lastMessage?.createdAt.getTime() ?? 0;
     const bTime = b.lastMessage?.createdAt.getTime() ?? 0;
     return bTime - aTime;
