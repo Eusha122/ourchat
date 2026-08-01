@@ -22,23 +22,46 @@ class AppUpdatePrompt extends StatefulWidget {
   State<AppUpdatePrompt> createState() => _AppUpdatePromptState();
 }
 
-class _AppUpdatePromptState extends State<AppUpdatePrompt> {
-  bool _checked = false;
+class _AppUpdatePromptState extends State<AppUpdatePrompt>
+    with WidgetsBindingObserver {
+  bool _checking = false;
   AppUpdateInfo? _requiredUpdate;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _check());
   }
 
-  Future<void> _check() async {
-    if (_checked || defaultTargetPlatform != TargetPlatform.android) return;
-    _checked = true;
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
 
-    final update = await AppUpdateService().checkForUpdate();
-    if (!mounted || update == null) return;
-    setState(() => _requiredUpdate = update);
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // A release published while the app sat in the background would
+    // otherwise go unnoticed until the process was killed and cold started,
+    // which on a phone can be days.
+    if (state == AppLifecycleState.resumed) _check();
+  }
+
+  Future<void> _check() async {
+    if (_checking ||
+        _requiredUpdate != null ||
+        defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+    _checking = true;
+    try {
+      final update = await AppUpdateService().checkForUpdate();
+      if (!mounted || update == null) return;
+      setState(() => _requiredUpdate = update);
+    } finally {
+      _checking = false;
+    }
   }
 
   @override

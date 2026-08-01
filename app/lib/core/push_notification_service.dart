@@ -18,12 +18,24 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await NotificationService().init();
 
   final data = message.data;
-  if (data['type'] != 'message') return;
-  await NotificationService().showMessageNotification(
-    title: (data['title'] as String?) ?? 'New message',
-    body: (data['body'] as String?) ?? 'Sent a message',
-    conversationId: data['conversationId'] as String?,
-  );
+  switch (data['type']) {
+    case 'message':
+      await NotificationService().showMessageNotification(
+        title: (data['title'] as String?) ?? 'New message',
+        body: (data['body'] as String?) ?? 'Sent a message',
+        conversationId: data['conversationId'] as String?,
+      );
+    case 'call':
+      final callId = data['callId'] as String?;
+      if (callId == null) return;
+      await NotificationService().showIncomingCallNotification(
+        callId: callId,
+        caller: (data['callerName'] as String?) ?? 'Someone',
+        isVideo: data['isVideo'] == 'true',
+        // No CallRingtoneService running in this isolate to ring instead.
+        playSound: true,
+      );
+  }
 }
 
 /// Data-only pushes (see backend `lib/push.ts`) are handled entirely by

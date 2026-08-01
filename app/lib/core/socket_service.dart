@@ -19,6 +19,8 @@ class SocketService {
       StreamController<ConversationUpdateEvent>.broadcast();
   final _typingController = StreamController<TypingEvent>.broadcast();
   final _presenceController = StreamController<PresenceEvent>.broadcast();
+  final _conversationReadController =
+      StreamController<ConversationReadEvent>.broadcast();
   final _messageUpdateController = StreamController<ChatMessage>.broadcast();
   final _messageRemovedController =
       StreamController<MessageRemovedEvent>.broadcast();
@@ -34,6 +36,8 @@ class SocketService {
       _conversationUpdateController.stream;
   Stream<TypingEvent> get onTyping => _typingController.stream;
   Stream<PresenceEvent> get onPresence => _presenceController.stream;
+  Stream<ConversationReadEvent> get onConversationRead =>
+      _conversationReadController.stream;
   Stream<ChatMessage> get onMessageUpdated => _messageUpdateController.stream;
   Stream<MessageRemovedEvent> get onMessageRemoved =>
       _messageRemovedController.stream;
@@ -87,6 +91,11 @@ class SocketService {
     _socket!.on('presence:update', (data) {
       _presenceController.add(
         PresenceEvent.fromJson(Map<String, dynamic>.from(data as Map)),
+      );
+    });
+    _socket!.on('conversation:read', (data) {
+      _conversationReadController.add(
+        ConversationReadEvent.fromJson(Map<String, dynamic>.from(data as Map)),
       );
     });
     _socket!.on('call:offer', (data) {
@@ -183,6 +192,7 @@ class SocketService {
     _conversationUpdateController.close();
     _typingController.close();
     _presenceController.close();
+    _conversationReadController.close();
     _messageUpdateController.close();
     _messageRemovedController.close();
     _callOfferController.close();

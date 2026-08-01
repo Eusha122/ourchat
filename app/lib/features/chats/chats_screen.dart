@@ -38,20 +38,32 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
     // Fires for every participant, including whoever just sent the message,
     // so their own unread badge must not bump for their own message.
     final myId = ref.read(authControllerProvider).value?.user?.id;
+    // Don't count a message as unread when it's mine, or when the user is
+    // sitting in that very conversation — ConversationScreen marks those read
+    // server-side immediately, so bumping the badge here would leave a stale
+    // count until the next full refetch.
     final isOwnMessage = event.lastMessage.senderId == myId;
+    final isOpenConversation =
+        ref.read(activeConversationIdProvider) == event.conversationId;
+    final countsAsUnread = !isOwnMessage && !isOpenConversation;
+
+    final index = _conversations.indexWhere(
+      (conversation) => conversation.id == event.conversationId,
+    );
+    // A conversation we don't have yet (first message of a brand new chat,
+    // sent from either side) has no row to patch — refetch instead. Kept
+    // outside setState: _load drives its own setState calls.
+    if (index == -1) {
+      _load();
+      return;
+    }
+
     setState(() {
-      final index = _conversations.indexWhere(
-        (conversation) => conversation.id == event.conversationId,
-      );
-      if (index == -1) {
-        _load();
-        return;
-      }
       final updated = _conversations[index].copyWith(
         lastMessage: event.lastMessage,
-        unreadCount: isOwnMessage
-            ? _conversations[index].unreadCount
-            : _conversations[index].unreadCount + 1,
+        unreadCount: countsAsUnread
+            ? _conversations[index].unreadCount + 1
+            : _conversations[index].unreadCount,
       );
       _conversations
         ..removeAt(index)

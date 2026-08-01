@@ -39,6 +39,15 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
       _sub?.cancel();
       _sub = next?.onMessage.listen(_onMessage);
     }, fireImmediately: true);
+    // The banner has its own multi-second auto-dismiss timer, so tapping its
+    // own "Open" action (or otherwise navigating into any conversation while
+    // it's still showing) would otherwise leave it floating over the chat
+    // it just opened until that timer runs out on its own.
+    ref.listenManual(activeConversationIdProvider, (previous, next) {
+      if (next != null) {
+        widget.scaffoldMessengerKey.currentState?.hideCurrentSnackBar();
+      }
+    });
   }
 
   void _onMessage(ChatMessage message) {

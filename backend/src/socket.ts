@@ -3,6 +3,7 @@ import { Server } from "socket.io";
 import { verifyAccessToken } from "./lib/jwt";
 import { prisma } from "./prisma";
 import { postAuthorSelect, toPublicMessage } from "./lib/serializers";
+import { sendCallPush } from "./lib/push";
 
 let io: Server | undefined;
 
@@ -16,6 +17,16 @@ type ActiveCall = {
   kind: CallKind;
   startedAt: Date;
   acceptedAt?: Date;
+  // Kept only so a callee who wasn't connected when the call started (app
+  // closed) can be resent the same offer once their socket reconnects —
+  // see the `connection` handler below. Never persisted to the database.
+  offer: { type: string; sdp: string };
+  caller: {
+    id: string;
+    username: string;
+    displayName: string | null;
+    avatarUrl: string | null;
+  };
 };
 
 // Signaling is intentionally transient. SDP/ICE never reaches the database;
@@ -179,6 +190,21 @@ export function initSocket(httpServer: HttpServer): Server {
       });
     });
 
+    // Replays any call this user is being rung for right now — covers a
+    // callee whose app was fully closed when the offer first went out (they
+    // only had the push alert, no live socket to receive the real offer on)
+    // and is only just reconnecting, e.g. by tapping that notification.
+    for (const [callId, call] of activeCalls) {
+      if (call.calleeId !== userId || call.acceptedAt != null) continue;
+      socket.emit("call:offer", {
+        callId,
+        conversationId: call.conversationId,
+        kind: call.kind,
+        offer: call.offer,
+        caller: call.caller,
+      });
+    }
+
     socket.on("disconnect", () => {
       const count = onlineCounts.get(userId) ?? 0;
       if (count <= 1) {
@@ -266,6 +292,8 @@ export function initSocket(httpServer: HttpServer): Server {
           messageId: callMessage.id,
           kind: data.kind,
           startedAt: new Date(),
+          offer: data.offer,
+          caller: caller.user,
         });
         setTimeout(() => {
           const active = activeCalls.get(callId);
@@ -287,6 +315,16 @@ export function initSocket(httpServer: HttpServer): Server {
           offer: data.offer,
           caller: caller.user,
         });
+        // Reaches the callee even if they have no socket connected at all
+        // right now (app closed); the actual offer above is replayed to them
+        // over the socket once they reconnect, within the 35s call window —
+        // see the `connection` handler's activeCalls resync.
+        sendCallPush(callee.userId, {
+          callId,
+          conversationId: data.conversationId,
+          callerName: caller.user.displayName || `@${caller.user.username}`,
+          isVideo: data.kind === "video",
+        }).catch((error) => console.error("call push send failed", error));
       })().catch((error) => console.error("call offer relay failed", error));
     });
 

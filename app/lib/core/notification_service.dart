@@ -159,6 +159,11 @@ class NotificationService {
     required String callId,
     required String caller,
     required bool isVideo,
+    // The live in-app path rings via CallRingtoneService (just_audio, so it
+    // can loop the custom ringtone); that has nothing to run when this fires
+    // from the background push handler instead, so that path needs the
+    // notification itself to make sound.
+    bool playSound = false,
   }) async {
     try {
       await init();
@@ -170,14 +175,14 @@ class NotificationService {
         notificationId,
         'Incoming ${isVideo ? 'video' : 'voice'} call',
         '$caller is calling you',
-        const NotificationDetails(
+        NotificationDetails(
           android: AndroidNotificationDetails(
             _callChannelId,
             'Calls',
             channelDescription: 'Incoming call alerts',
             importance: Importance.max,
             priority: Priority.max,
-            playSound: false,
+            playSound: playSound,
             category: AndroidNotificationCategory.call,
             ongoing: true,
             autoCancel: false,

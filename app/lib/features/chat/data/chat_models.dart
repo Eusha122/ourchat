@@ -48,6 +48,7 @@ class Conversation {
     required this.otherParticipant,
     required this.lastMessage,
     required this.unreadCount,
+    this.otherLastReadAt,
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
@@ -63,6 +64,9 @@ class Conversation {
       // unreadCount/lastMessage are absent there and only populated by the
       // GET /conversations list endpoint.
       unreadCount: json['unreadCount'] as int? ?? 0,
+      otherLastReadAt: json['otherLastReadAt'] != null
+          ? DateTime.parse(json['otherLastReadAt'] as String)
+          : null,
     );
   }
 
@@ -71,12 +75,18 @@ class Conversation {
   final LastMessage? lastMessage;
   final int unreadCount;
 
+  /// When the other participant last opened this conversation; anything I
+  /// sent at or before it has been seen. Only the single-conversation
+  /// endpoint populates this.
+  final DateTime? otherLastReadAt;
+
   Conversation copyWith({LastMessage? lastMessage, int? unreadCount}) {
     return Conversation(
       id: id,
       otherParticipant: otherParticipant,
       lastMessage: lastMessage ?? this.lastMessage,
       unreadCount: unreadCount ?? this.unreadCount,
+      otherLastReadAt: otherLastReadAt,
     );
   }
 }
@@ -247,6 +257,26 @@ class TypingEvent {
 
   final String userId;
   final bool isTyping;
+}
+
+class ConversationReadEvent {
+  const ConversationReadEvent({
+    required this.conversationId,
+    required this.userId,
+    required this.readAt,
+  });
+
+  factory ConversationReadEvent.fromJson(Map<String, dynamic> json) {
+    return ConversationReadEvent(
+      conversationId: json['conversationId'] as String,
+      userId: json['userId'] as String,
+      readAt: DateTime.parse(json['readAt'] as String),
+    );
+  }
+
+  final String conversationId;
+  final String userId;
+  final DateTime readAt;
 }
 
 class PresenceEvent {

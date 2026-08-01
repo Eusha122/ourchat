@@ -66,7 +66,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   StreamSubscription<MessageRemovedEvent>? _messageRemovedSub;
   StreamSubscription<TypingEvent>? _typingSub;
   StreamSubscription<PresenceEvent>? _presenceSub;
+  StreamSubscription<ConversationReadEvent>? _readSub;
   Timer? _typingResetTimer;
+  DateTime? _otherLastReadAt;
   bool _isLoading = true;
   bool _isSending = false;
   bool _otherIsTyping = false;
@@ -103,7 +105,14 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         .where((event) => event.userId == widget.otherParticipant.id)
         .listen(_onPresence);
     socket?.queryPresence(widget.otherParticipant.id);
-    ref.read(conversationsApiProvider).markRead(widget.conversationId);
+    _readSub = socket?.onConversationRead
+        .where(
+          (event) =>
+              event.conversationId == widget.conversationId &&
+              event.userId == widget.otherParticipant.id,
+        )
+        .listen(_onConversationRead);
+    _markRead();
     // Marks this conversation as "open" so the global listener doesn't pop
     // a banner/sound for messages we're already looking at.
     Future.microtask(
@@ -124,6 +133,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     _messageRemovedSub?.cancel();
     _typingSub?.cancel();
     _presenceSub?.cancel();
+    _readSub?.cancel();
     _typingResetTimer?.cancel();
     _textController.dispose();
     _scrollController.dispose();
@@ -137,7 +147,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       return; // avoid duplicating our own send
     }
     setState(() => _messages.insert(0, message));
-    ref.read(conversationsApiProvider).markRead(widget.conversationId);
+    _markRead();
   }
 
   void _replaceMessage(ChatMessage message) {
@@ -200,6 +210,24 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     }
   }
 
+  void _onConversationRead(ConversationReadEvent event) {
+    if (!mounted) return;
+    final current = _otherLastReadAt;
+    if (current != null && !event.readAt.isAfter(current)) return;
+    setState(() => _otherLastReadAt = event.readAt);
+  }
+
+  /// Clearing the unread badge must not depend on the socket round-trip, so
+  /// this is fired on open and on every message that lands while open.
+  void _markRead() {
+    ref
+        .read(conversationsApiProvider)
+        .markRead(widget.conversationId)
+        .catchError((_) {
+          // Best effort; the next open retries.
+        });
+  }
+
   void _onPresence(PresenceEvent event) {
     if (!mounted) return;
     setState(() => _otherIsOnline = event.online);
@@ -211,15 +239,29 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       _error = null;
     });
     try {
-      final page = await ref
-          .read(conversationsApiProvider)
-          .fetchMessages(widget.conversationId);
+      final api = ref.read(conversationsApiProvider);
+      final page = await api.fetchMessages(widget.conversationId);
       if (!mounted) return;
       setState(() {
         _messages
           ..clear()
           ..addAll(page.messages);
       });
+      // Their read state may have advanced while this screen was closed, so
+      // the receipt has to be seeded from the server rather than relying
+      // solely on the live socket event.
+      try {
+        final conversation = await api.fetchConversation(widget.conversationId);
+        if (!mounted) return;
+        final serverReadAt = conversation.otherLastReadAt;
+        if (serverReadAt != null &&
+            (_otherLastReadAt == null ||
+                serverReadAt.isAfter(_otherLastReadAt!))) {
+          setState(() => _otherLastReadAt = serverReadAt);
+        }
+      } on ConversationsApiException {
+        // Non-fatal: the thread still renders, just without a seeded receipt.
+      }
     } on ConversationsApiException catch (e) {
       if (!mounted) return;
       setState(() => _error = e.message);
@@ -403,13 +445,39 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
     final myId = ref.watch(authControllerProvider).value?.user?.id;
 
+    // Instagram shows a single receipt, under the newest of my messages they
+    // have actually read. _messages is newest-first, so the first match wins.
+    final readAt = _otherLastReadAt;
+    var seenIndex = -1;
+    if (readAt != null) {
+      for (var i = 0; i < _messages.length; i++) {
+        final candidate = _messages[i];
+        if (candidate.sender.id != myId || candidate.isUnsent) continue;
+        // Newest-first, so the first of mine at/before their read time is the
+        // newest one they've seen. Anything newer than that stays unmarked,
+        // exactly like sending a fresh message after they last looked.
+        if (!candidate.createdAt.isAfter(readAt)) {
+          seenIndex = i;
+          break;
+        }
+      }
+    }
+
+    // The list is reversed, so the typing bubble occupies index 0 to sit
+    // visually at the bottom, just under the newest message.
+    final showTyping = _otherIsTyping;
+
     return ListView.builder(
       controller: _scrollController,
       reverse: true,
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(22, 26, 22, 14),
-      itemCount: _messages.length,
-      itemBuilder: (context, index) {
+      itemCount: _messages.length + (showTyping ? 1 : 0),
+      itemBuilder: (context, rawIndex) {
+        if (showTyping && rawIndex == 0) {
+          return _TypingIndicator(avatarUrl: widget.otherParticipant.avatarUrl);
+        }
+        final index = showTyping ? rawIndex - 1 : rawIndex;
         final message = _messages[index];
         final isMine = message.sender.id == myId;
         final Widget content = message.isUnsent
@@ -439,23 +507,48 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 ),
               };
 
+        final column = Column(
+          crossAxisAlignment: isMine
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
+          children: [
+            content,
+            if (!message.isUnsent && message.reactions.isNotEmpty)
+              _MessageReactionStrip(
+                reactions: message.reactions,
+                mine: isMine,
+                currentUserId: myId,
+              ),
+            if (index == seenIndex) const _SeenReceipt(),
+          ],
+        );
+
+        // Instagram only draws the avatar beside the newest message of a
+        // consecutive run from the same person; the rest of the run stays
+        // indented by the same width so every bubble in it lines up.
+        final Widget body;
+        if (isMine) {
+          body = column;
+        } else {
+          final endsGroup =
+              index == 0 || _messages[index - 1].sender.id != message.sender.id;
+          body = Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _MessageAvatar(
+                avatarUrl: widget.otherParticipant.avatarUrl,
+                visible: endsGroup,
+              ),
+              const SizedBox(width: 8),
+              Flexible(child: column),
+            ],
+          );
+        }
+
         return _Appear(
           child: _MessageActionTarget(
             onLongPress: () => _showMessageActions(message, isMine),
-            child: Column(
-              crossAxisAlignment: isMine
-                  ? CrossAxisAlignment.end
-                  : CrossAxisAlignment.start,
-              children: [
-                content,
-                if (!message.isUnsent && message.reactions.isNotEmpty)
-                  _MessageReactionStrip(
-                    reactions: message.reactions,
-                    mine: isMine,
-                    currentUserId: myId,
-                  ),
-              ],
-            ),
+            child: body,
           ),
         );
       },
@@ -1065,6 +1158,205 @@ class _Appear extends StatelessWidget {
       child: child,
     );
   }
+}
+
+/// Sized to sit level with a single-line bubble so the avatar and the message
+/// read as one unit. Shared by the message rows and the typing indicator.
+const double _chatAvatarSize = 36;
+
+/// Renders the sender's avatar, or an invisible box of the same width so that
+/// bubbles in the middle of a group stay aligned with the one that has it.
+class _MessageAvatar extends StatelessWidget {
+  const _MessageAvatar({required this.avatarUrl, required this.visible});
+
+  final String? avatarUrl;
+  final bool visible;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!visible) {
+      return const SizedBox(width: _chatAvatarSize, height: 0);
+    }
+    return _ChatAvatar(avatarUrl: avatarUrl);
+  }
+}
+
+class _ChatAvatar extends StatelessWidget {
+  const _ChatAvatar({required this.avatarUrl});
+
+  final String? avatarUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    const placeholder = ColoredBox(
+      color: Color(0x33FFFFFF),
+      child: Icon(Icons.person_rounded, color: Colors.white70, size: 19),
+    );
+    return Padding(
+      // Lifts the avatar off the bubble's own vertical margin so it sits
+      // level with the bubble body rather than below it.
+      padding: const EdgeInsets.only(bottom: 5),
+      child: SizedBox(
+        width: _chatAvatarSize,
+        height: _chatAvatarSize,
+        child: ClipOval(
+          child: avatarUrl == null
+              ? placeholder
+              : CachedNetworkImage(
+                  imageUrl: avatarUrl!,
+                  fit: BoxFit.cover,
+                  errorWidget: (_, _, _) => placeholder,
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "Seen" receipt, mirroring Instagram: a single quiet line under the newest
+/// message the other person has actually read.
+class _SeenReceipt extends StatelessWidget {
+  const _SeenReceipt();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 1, bottom: 6, right: 6),
+      child: Text(
+        'Seen',
+        style: TextStyle(
+          fontFamily: 'Poppins',
+          color: Colors.white.withValues(alpha: 0.55),
+          fontSize: 10,
+          height: 1.2,
+          fontWeight: FontWeight.w400,
+          letterSpacing: 0.1,
+        ),
+      ),
+    );
+  }
+}
+
+/// Avatar plus a glass bubble of three breathing dots, matching the incoming
+/// message treatment so it reads as a message being written in place.
+class _TypingIndicator extends StatefulWidget {
+  const _TypingIndicator({required this.avatarUrl});
+
+  final String? avatarUrl;
+
+  @override
+  State<_TypingIndicator> createState() => _TypingIndicatorState();
+}
+
+class _TypingIndicatorState extends State<_TypingIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const radius = BorderRadius.all(Radius.circular(22));
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _ChatAvatar(avatarUrl: widget.avatarUrl),
+          const SizedBox(width: 8),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: radius,
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF1C1250).withValues(alpha: 0.20),
+                  blurRadius: 30,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: radius,
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 13,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: radius,
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.white.withValues(alpha: 0.26),
+                        Colors.white.withValues(alpha: 0.15),
+                      ],
+                    ),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.22),
+                    ),
+                  ),
+                  child: AnimatedBuilder(
+                    animation: _controller,
+                    builder: (context, _) => CustomPaint(
+                      size: const Size(34, 11),
+                      painter: _TypingDotsPainter(progress: _controller.value),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Painted in one pass rather than as three separately transformed widgets:
+/// tiny translucent circles each carrying their own Transform inside a
+/// BackdropFilter is exactly the combination the Impeller backend renders
+/// unreliably on device, which left the bubble looking empty.
+class _TypingDotsPainter extends CustomPainter {
+  const _TypingDotsPainter({required this.progress});
+
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const count = 3;
+    const radius = 3.6;
+    final gap = (size.width - count * radius * 2) / (count - 1);
+    final paint = Paint()..style = PaintingStyle.fill;
+
+    for (var i = 0; i < count; i++) {
+      // Stagger each dot a third of a cycle apart so the pulse travels
+      // left to right.
+      final phase = (progress + i / count) % 1;
+      final eased = (math.sin(phase * math.pi * 2) + 1) / 2;
+      paint.color = Colors.white.withValues(alpha: 0.72 + 0.28 * eased);
+      canvas.drawCircle(
+        Offset(radius + i * (radius * 2 + gap), size.height / 2 - 2 * eased),
+        radius,
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _TypingDotsPainter oldDelegate) =>
+      oldDelegate.progress != progress;
 }
 
 class _Bubble extends StatelessWidget {

@@ -33,10 +33,7 @@ function getApp(): App | null {
 /// anything itself — the client fully controls rendering, which is what lets
 /// it skip showing a duplicate when the conversation is already open and
 /// being delivered live over the socket.
-export async function sendMessagePush(
-  userId: string,
-  payload: { title: string; body: string; conversationId: string },
-) {
+async function sendDataPush(userId: string, data: Record<string, string>) {
   const firebaseApp = getApp();
   if (!firebaseApp) return;
 
@@ -48,12 +45,7 @@ export async function sendMessagePush(
 
   const response = await getMessaging(firebaseApp).sendEachForMulticast({
     tokens: tokens.map((t) => t.token),
-    data: {
-      type: "message",
-      conversationId: payload.conversationId,
-      title: payload.title,
-      body: payload.body,
-    },
+    data,
     android: { priority: "high" },
   });
 
@@ -73,4 +65,39 @@ export async function sendMessagePush(
       where: { token: { in: deadTokens } },
     });
   }
+}
+
+export async function sendMessagePush(
+  userId: string,
+  payload: { title: string; body: string; conversationId: string },
+) {
+  await sendDataPush(userId, {
+    type: "message",
+    conversationId: payload.conversationId,
+    title: payload.title,
+    body: payload.body,
+  });
+}
+
+/// Alerts a device to an incoming call it isn't connected to receive over
+/// the socket. Deliberately carries no SDP — offers go stale in seconds and
+/// don't fit push payload limits anyway; the app resyncs the live offer over
+/// the socket itself once it reconnects (see socket.ts's `connection`
+/// handler replaying from `activeCalls`).
+export async function sendCallPush(
+  userId: string,
+  payload: {
+    callId: string;
+    conversationId: string;
+    callerName: string;
+    isVideo: boolean;
+  },
+) {
+  await sendDataPush(userId, {
+    type: "call",
+    callId: payload.callId,
+    conversationId: payload.conversationId,
+    callerName: payload.callerName,
+    isVideo: String(payload.isVideo),
+  });
 }

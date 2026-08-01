@@ -136,11 +136,18 @@ conversationsRouter.get("/", requireAuth, async (req, res) => {
     },
   });
 
-  const results = await Promise.all(
+  const maybeResults = await Promise.all(
     participations.map(async (p) => {
       const other = p.conversation.participants.find(
         (pt) => pt.userId !== req.userId,
       )?.user;
+      // A conversation whose peer no longer exists (deleted account cascades
+      // away their participant row) has nothing to render. Drop it here
+      // rather than emitting an entry with no `otherParticipant` — clients
+      // treat that field as required, so a single malformed row would
+      // otherwise break parsing of the whole list.
+      if (!other) return null;
+
       const lastMessage = p.conversation.messages[0] ?? null;
       const unreadCount = await prisma.message.count({
         where: {
@@ -167,6 +174,8 @@ conversationsRouter.get("/", requireAuth, async (req, res) => {
       };
     }),
   );
+
+  const results = maybeResults.filter((entry) => entry !== null);
 
   results.sort((a, b) => {
     const aTime = a.lastMessage?.createdAt.getTime() ?? 0;
@@ -200,9 +209,10 @@ conversationsRouter.get("/:conversationId", requireAuth, async (req, res) => {
     return;
   }
 
-  const other = participant.conversation.participants.find(
+  const otherParticipantRow = participant.conversation.participants.find(
     (pt) => pt.userId !== req.userId,
-  )?.user;
+  );
+  const other = otherParticipantRow?.user;
   if (!other) {
     res.status(404).json({ error: "Conversation participant not found" });
     return;
@@ -234,6 +244,9 @@ conversationsRouter.get("/:conversationId", requireAuth, async (req, res) => {
           }
         : null,
       unreadCount,
+      // Drives the "Seen" receipt: any of my messages sent at or before this
+      // instant has been read by them. Null until they've ever opened it.
+      otherLastReadAt: otherParticipantRow?.lastReadAt ?? null,
     },
   });
 });
@@ -544,10 +557,26 @@ conversationsRouter.post("/:conversationId/read", requireAuth, async (req, res) 
     return;
   }
 
+  const readAt = new Date();
   await prisma.conversationParticipant.update({
     where: { conversationId_userId: { conversationId, userId: req.userId! } },
-    data: { lastReadAt: new Date() },
+    data: { lastReadAt: readAt },
   });
+
+  // Tell the other side so their "Seen" receipt updates live, the same way
+  // opening a thread flips the receipt on Instagram/Messenger.
+  const participants = await prisma.conversationParticipant.findMany({
+    where: { conversationId, userId: { not: req.userId } },
+    select: { userId: true },
+  });
+  const io = getIO();
+  for (const { userId } of participants) {
+    io.to(`user:${userId}`).emit("conversation:read", {
+      conversationId,
+      userId: req.userId,
+      readAt: readAt.toISOString(),
+    });
+  }
 
   res.json({ ok: true });
 });

@@ -32,9 +32,19 @@ class ConversationsApi {
     return _handle(() async {
       final response = await _dio.get('/conversations');
       final data = response.data as Map<String, dynamic>;
-      return (data['conversations'] as List)
-          .map((e) => Conversation.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final conversations = <Conversation>[];
+      for (final entry in data['conversations'] as List) {
+        try {
+          conversations.add(
+            Conversation.fromJson(entry as Map<String, dynamic>),
+          );
+        } catch (_) {
+          // Skip an individual unparseable row rather than letting it throw
+          // out of the whole request — one malformed conversation must never
+          // leave the user staring at an empty chat list.
+        }
+      }
+      return conversations;
     });
   }
 
