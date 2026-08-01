@@ -49,6 +49,9 @@ class Conversation {
     required this.lastMessage,
     required this.unreadCount,
     this.otherLastReadAt,
+    this.pinned = false,
+    this.mutedMessages = false,
+    this.mutedCalls = false,
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
@@ -67,6 +70,9 @@ class Conversation {
       otherLastReadAt: json['otherLastReadAt'] != null
           ? DateTime.parse(json['otherLastReadAt'] as String)
           : null,
+      pinned: json['pinned'] as bool? ?? false,
+      mutedMessages: json['mutedMessages'] as bool? ?? false,
+      mutedCalls: json['mutedCalls'] as bool? ?? false,
     );
   }
 
@@ -80,13 +86,26 @@ class Conversation {
   /// endpoint populates this.
   final DateTime? otherLastReadAt;
 
-  Conversation copyWith({LastMessage? lastMessage, int? unreadCount}) {
+  final bool pinned;
+  final bool mutedMessages;
+  final bool mutedCalls;
+
+  Conversation copyWith({
+    LastMessage? lastMessage,
+    int? unreadCount,
+    bool? pinned,
+    bool? mutedMessages,
+    bool? mutedCalls,
+  }) {
     return Conversation(
       id: id,
       otherParticipant: otherParticipant,
       lastMessage: lastMessage ?? this.lastMessage,
       unreadCount: unreadCount ?? this.unreadCount,
       otherLastReadAt: otherLastReadAt,
+      pinned: pinned ?? this.pinned,
+      mutedMessages: mutedMessages ?? this.mutedMessages,
+      mutedCalls: mutedCalls ?? this.mutedCalls,
     );
   }
 }

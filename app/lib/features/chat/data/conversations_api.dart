@@ -123,6 +123,34 @@ class ConversationsApi {
     });
   }
 
+  Future<void> setPinned(String conversationId, bool pinned) async {
+    return _handle(() async {
+      await _dio.post(
+        '/conversations/$conversationId/pin',
+        data: {'pinned': pinned},
+      );
+    });
+  }
+
+  Future<void> setMuted(
+    String conversationId, {
+    bool? messages,
+    bool? calls,
+  }) async {
+    return _handle(() async {
+      await _dio.post(
+        '/conversations/$conversationId/mute',
+        data: {'messages': ?messages, 'calls': ?calls},
+      );
+    });
+  }
+
+  Future<void> deleteConversation(String conversationId) async {
+    return _handle(() async {
+      await _dio.delete('/conversations/$conversationId');
+    });
+  }
+
   Future<void> removeForMe(String conversationId, String messageId) async {
     return _handle(() async {
       await _dio.post(

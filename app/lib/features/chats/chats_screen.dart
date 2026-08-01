@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -30,7 +31,20 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
     _load();
     ref.listenManual(socketServiceProvider, (previous, next) {
       next?.onConversationUpdate.listen(_onConversationUpdated);
+      // Covers both directions: the server echoes this back to whoever just
+      // deleted it (so this list updates without a manual local removal)
+      // and pushes it live to the other participant.
+      next?.onConversationDeleted.listen(_onConversationDeleted);
     }, fireImmediately: true);
+  }
+
+  void _onConversationDeleted(String conversationId) {
+    if (!mounted) return;
+    setState(() {
+      _conversations.removeWhere(
+        (conversation) => conversation.id == conversationId,
+      );
+    });
   }
 
   void _onConversationUpdated(ConversationUpdateEvent event) {
@@ -130,9 +144,125 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
         );
         _load();
       },
+      onLongPress: (index) {
+        HapticFeedback.mediumImpact();
+        _showChatMenu(_conversations[index]);
+      },
     );
   }
+
+  Future<void> _showChatMenu(Conversation conversation) async {
+    final action = await showModalBottomSheet<_ChatMenuAction>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _ChatMenuSheet(conversation: conversation),
+    );
+    if (action == null || !mounted) return;
+
+    final api = ref.read(conversationsApiProvider);
+    final index = _conversations.indexWhere((c) => c.id == conversation.id);
+
+    switch (action) {
+      case _ChatMenuAction.togglePin:
+        final next = !conversation.pinned;
+        if (index != -1) {
+          setState(() {
+            _conversations[index] = _conversations[index].copyWith(
+              pinned: next,
+            );
+            _conversations.sort((a, b) {
+              if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+              final aTime = a.lastMessage?.createdAt.millisecondsSinceEpoch ?? 0;
+              final bTime = b.lastMessage?.createdAt.millisecondsSinceEpoch ?? 0;
+              return bTime - aTime;
+            });
+          });
+        }
+        try {
+          await api.setPinned(conversation.id, next);
+        } on ConversationsApiException catch (error) {
+          if (mounted) _showError(error.message);
+        }
+      case _ChatMenuAction.toggleMuteMessages:
+        final next = !conversation.mutedMessages;
+        if (index != -1) {
+          setState(() {
+            _conversations[index] = _conversations[index].copyWith(
+              mutedMessages: next,
+            );
+          });
+        }
+        try {
+          await api.setMuted(conversation.id, messages: next);
+        } on ConversationsApiException catch (error) {
+          if (mounted) _showError(error.message);
+        }
+      case _ChatMenuAction.toggleMuteCalls:
+        final next = !conversation.mutedCalls;
+        if (index != -1) {
+          setState(() {
+            _conversations[index] = _conversations[index].copyWith(
+              mutedCalls: next,
+            );
+          });
+        }
+        try {
+          await api.setMuted(conversation.id, calls: next);
+        } on ConversationsApiException catch (error) {
+          if (mounted) _showError(error.message);
+        }
+      case _ChatMenuAction.delete:
+        _confirmDelete(conversation);
+    }
+  }
+
+  Future<void> _confirmDelete(Conversation conversation) async {
+    final name = conversation.otherParticipant.displayName?.isNotEmpty == true
+        ? conversation.otherParticipant.displayName!
+        : '@${conversation.otherParticipant.username}';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete this chat?'),
+        content: Text(
+          "This permanently deletes your entire conversation with $name — "
+          'every message, for both of you. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _conversations.removeWhere((c) => c.id == conversation.id);
+    });
+    try {
+      await ref.read(conversationsApiProvider).deleteConversation(conversation.id);
+    } on ConversationsApiException catch (error) {
+      if (!mounted) return;
+      _showError(error.message);
+      _load();
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
 }
+
+enum _ChatMenuAction { togglePin, toggleMuteMessages, toggleMuteCalls, delete }
 
 class _EmptyState extends StatelessWidget {
   const _EmptyState({super.key});
@@ -281,10 +411,11 @@ class _ErrorState extends StatelessWidget {
 }
 
 class _ChatList extends StatelessWidget {
-  const _ChatList({super.key, required this.entries, this.onTap});
+  const _ChatList({super.key, required this.entries, this.onTap, this.onLongPress});
 
   final List<_ChatEntry> entries;
   final ValueChanged<int>? onTap;
+  final ValueChanged<int>? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -296,6 +427,7 @@ class _ChatList extends StatelessWidget {
         return _ChatRow(
           entry: entries[index],
           onTap: onTap == null ? null : () => onTap!(index),
+          onLongPress: onLongPress == null ? null : () => onLongPress!(index),
         );
       },
     );
@@ -303,10 +435,11 @@ class _ChatList extends StatelessWidget {
 }
 
 class _ChatRow extends StatefulWidget {
-  const _ChatRow({required this.entry, this.onTap});
+  const _ChatRow({required this.entry, this.onTap, this.onLongPress});
 
   final _ChatEntry entry;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   @override
   State<_ChatRow> createState() => _ChatRowState();
@@ -321,6 +454,7 @@ class _ChatRowState extends State<_ChatRow> {
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
+      onLongPress: widget.onLongPress,
       onTapDown: widget.onTap == null
           ? null
           : (_) => setState(() => _pressed = true),
@@ -350,18 +484,40 @@ class _ChatRowState extends State<_ChatRow> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      entry.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontFamily: 'Poppins',
-                        color: _ink,
-                        fontSize: 14,
-                        height: 1.2,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.2,
-                      ),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            entry.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontFamily: 'Poppins',
+                              color: _ink,
+                              fontSize: 14,
+                              height: 1.2,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                        ),
+                        if (entry.pinned) ...[
+                          const SizedBox(width: 5),
+                          const Icon(
+                            Icons.push_pin_rounded,
+                            size: 12,
+                            color: _purple,
+                          ),
+                        ],
+                        if (entry.mutedMessages) ...[
+                          const SizedBox(width: 4),
+                          const Icon(
+                            Icons.notifications_off_rounded,
+                            size: 12,
+                            color: Color(0xFFB9B9C4),
+                          ),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -633,6 +789,8 @@ class _ChatEntry {
     required this.fallback,
     this.avatarUrl,
     this.unread = 0,
+    this.pinned = false,
+    this.mutedMessages = false,
   });
 
   factory _ChatEntry.fromConversation(Conversation conversation) {
@@ -647,6 +805,8 @@ class _ChatEntry {
       avatarUrl: other.avatarUrl,
       unread: conversation.unreadCount,
       fallback: const Color(0xFF7467FF),
+      pinned: conversation.pinned,
+      mutedMessages: conversation.mutedMessages,
     );
   }
 
@@ -656,6 +816,8 @@ class _ChatEntry {
   final String? avatarUrl;
   final Color fallback;
   final int unread;
+  final bool pinned;
+  final bool mutedMessages;
 
   static String _formatTime(DateTime date) {
     final local = date.toLocal();

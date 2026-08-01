@@ -64,6 +64,15 @@ class AlbumsApi {
     });
   }
 
+  Future<void> deleteItem({
+    required String albumId,
+    required String itemId,
+  }) async {
+    return _handle(() async {
+      await _dio.delete('/albums/$albumId/items/$itemId');
+    });
+  }
+
   Future<AlbumItem> uploadItem({
     required String albumId,
     required String filePath,

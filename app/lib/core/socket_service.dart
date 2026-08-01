@@ -21,6 +21,8 @@ class SocketService {
   final _presenceController = StreamController<PresenceEvent>.broadcast();
   final _conversationReadController =
       StreamController<ConversationReadEvent>.broadcast();
+  final _conversationDeletedController =
+      StreamController<String>.broadcast();
   final _messageUpdateController = StreamController<ChatMessage>.broadcast();
   final _messageRemovedController =
       StreamController<MessageRemovedEvent>.broadcast();
@@ -38,6 +40,9 @@ class SocketService {
   Stream<PresenceEvent> get onPresence => _presenceController.stream;
   Stream<ConversationReadEvent> get onConversationRead =>
       _conversationReadController.stream;
+  /// Emits the conversationId that was permanently deleted, by either side.
+  Stream<String> get onConversationDeleted =>
+      _conversationDeletedController.stream;
   Stream<ChatMessage> get onMessageUpdated => _messageUpdateController.stream;
   Stream<MessageRemovedEvent> get onMessageRemoved =>
       _messageRemovedController.stream;
@@ -97,6 +102,13 @@ class SocketService {
       _conversationReadController.add(
         ConversationReadEvent.fromJson(Map<String, dynamic>.from(data as Map)),
       );
+    });
+    _socket!.on('conversation:deleted', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      final conversationId = map['conversationId'];
+      if (conversationId is String) {
+        _conversationDeletedController.add(conversationId);
+      }
     });
     _socket!.on('call:offer', (data) {
       _callOfferController.add(
@@ -193,6 +205,7 @@ class SocketService {
     _typingController.close();
     _presenceController.close();
     _conversationReadController.close();
+    _conversationDeletedController.close();
     _messageUpdateController.close();
     _messageRemovedController.close();
     _callOfferController.close();
