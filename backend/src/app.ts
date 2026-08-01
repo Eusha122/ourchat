@@ -6,6 +6,7 @@ import { authRouter } from "./routes/auth";
 import { usersRouter } from "./routes/users";
 import { postsRouter } from "./routes/posts";
 import { conversationsRouter } from "./routes/conversations";
+import { albumsRouter } from "./routes/albums";
 
 export const app = express();
 
@@ -20,6 +21,7 @@ app.use("/auth", authRouter);
 app.use("/users", usersRouter);
 app.use("/posts", postsRouter);
 app.use("/conversations", conversationsRouter);
+app.use("/albums", albumsRouter);
 
 // Public, deliberately small release manifest for the Android sideloaded
 // application.  Publish a new APK by changing these environment variables on

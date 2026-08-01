@@ -21,7 +21,7 @@ class AppShell extends ConsumerWidget {
     final segments = GoRouterState.of(context).uri.pathSegments;
     final isRootDestination =
         segments.length == 1 &&
-        const {'chats', 'feed', 'search', 'profile'}.contains(segments.first);
+        const {'chats', 'gallery', 'search', 'profile'}.contains(segments.first);
 
     if (!isRootDestination) {
       return navigationShell;

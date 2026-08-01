@@ -23,14 +23,17 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  posts        Post[]
-  postLikes    PostLike[]
-  comments     Comment[]
-  participants ConversationParticipant[]
-  messages     Message[]
-  messageHides MessageHide[]
+  posts            Post[]
+  postLikes        PostLike[]
+  comments         Comment[]
+  participants     ConversationParticipant[]
+  messages         Message[]
+  messageHides     MessageHide[]
   messageReactions MessageReaction[]
-  deviceTokens DeviceToken[]
+  deviceTokens     DeviceToken[]
+  albumsCreated    Album[]                   @relation("AlbumCreator")
+  albumMemberships AlbumMember[]
+  albumUploads     AlbumItem[]
 }
 
 /// One row per installed device. A push is sent to every token a user has
@@ -125,30 +128,30 @@ enum CallStatus {
 }
 
 model Message {
-  id             String       @id @default(uuid())
-  conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  senderId       String
-  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
-  type           MessageType  @default(TEXT)
-  text           String?
+  id                  String       @id @default(uuid())
+  conversationId      String
+  conversation        Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId            String
+  sender              User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  type                MessageType  @default(TEXT)
+  text                String?
   // LINK: linkUrl is the shared external URL, linkTitle/linkImageUrl are the
   // fetched oEmbed-style preview.
   // IMAGE: linkImageUrl holds the uploaded image's URL.
   // FILE: linkUrl holds the uploaded file's URL, linkTitle its original
   // filename, fileSize its size in bytes.
-  linkUrl        String?
-  linkTitle      String?
-  linkImageUrl   String?
-  fileSize       Int?
-  callKind       CallKind?
-  callStatus     CallStatus?
+  linkUrl             String?
+  linkTitle           String?
+  linkImageUrl        String?
+  fileSize            Int?
+  callKind            CallKind?
+  callStatus          CallStatus?
   callDurationSeconds Int?
-  unsentAt       DateTime?
-  createdAt      DateTime     @default(now())
+  unsentAt            DateTime?
+  createdAt           DateTime     @default(now())
 
-  hiddenBy       MessageHide[]
-  reactions      MessageReaction[]
+  hiddenBy  MessageHide[]
+  reactions MessageReaction[]
 
   @@index([conversationId, createdAt])
 }
@@ -179,4 +182,55 @@ model MessageReaction {
 
   @@unique([messageId, userId])
   @@index([messageId])
+}
+
+/// A shared photo/video vault between two people. Both members see the same
+/// album from their own account and either can add to it.
+model Album {
+  id          String   @id @default(uuid())
+  name        String
+  createdById String
+  createdBy   User     @relation("AlbumCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members AlbumMember[]
+  items   AlbumItem[]
+
+  @@index([createdById])
+}
+
+model AlbumMember {
+  id       String   @id @default(uuid())
+  albumId  String
+  userId   String
+  album    Album    @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt DateTime @default(now())
+
+  @@unique([albumId, userId])
+  @@index([userId])
+}
+
+enum AlbumItemType {
+  IMAGE
+  VIDEO
+}
+
+model AlbumItem {
+  id           String        @id @default(uuid())
+  albumId      String
+  uploaderId   String
+  album        Album         @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  uploader     User          @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+  type         AlbumItemType @default(IMAGE)
+  url          String
+  /// Cloudinary serves a cheap derived thumbnail; falls back to `url` when
+  /// the storage backend can't generate one.
+  thumbnailUrl String?
+  width        Int?
+  height       Int?
+  createdAt    DateTime      @default(now())
+
+  @@index([albumId, createdAt])
 }

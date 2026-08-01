@@ -7,7 +7,8 @@ import '../features/auth/screens/register_screen.dart';
 import '../features/auth/state/auth_controller.dart';
 import '../features/chat/screens/conversation_entry_screen.dart';
 import '../features/chats/chats_screen.dart';
-import '../features/feed/feed_screen.dart';
+import '../features/gallery/screens/album_detail_screen.dart';
+import '../features/gallery/screens/gallery_screen.dart';
 import '../features/posts/data/post_models.dart';
 import '../features/posts/screens/post_detail_screen.dart';
 import '../features/posts/screens/upload_post_screen.dart';
@@ -107,13 +108,13 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           StatefulShellBranch(
             routes: [
               GoRoute(
-                path: '/feed',
-                builder: (context, state) => const FeedScreen(),
+                path: '/gallery',
+                builder: (context, state) => const GalleryScreen(),
                 routes: [
                   GoRoute(
-                    path: ':postId',
-                    builder: (context, state) => PostDetailScreen(
-                      postId: state.pathParameters['postId']!,
+                    path: ':albumId',
+                    builder: (context, state) => AlbumDetailScreen(
+                      albumId: state.pathParameters['albumId']!,
                     ),
                   ),
                 ],

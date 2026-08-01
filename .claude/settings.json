@@ -90,7 +90,8 @@
       "Bash(git check-ignore *)",
       "Bash(python3 -c ' *)",
       "Bash(unzip -p \"app/build/app/outputs/flutter-apk/app-release.apk\" \"res/values/strings.xml\")",
-      "Bash(python3 -)"
+      "Bash(python3 -)",
+      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'cat /home/ubuntu/ourchat-backend/prisma/migrations/20260801182224_add_shared_albums/migration.sql')"
     ],
     "additionalDirectories": [
       "C:\\Users\\user\\Downloads"
