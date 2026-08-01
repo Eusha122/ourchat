@@ -86,7 +86,11 @@
       "Bash(rm -rf /tmp/calltest /tmp/anon_token.txt /tmp/token.txt /tmp/eusha_token.txt)",
       "Bash(ssh -i \"C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem\" ubuntu@13.232.202.161 \"sudo mv /tmp/ourchat.apk /var/www/ourchat/downloads/ourchat.apk && sudo chown www-data:www-data /var/www/ourchat/downloads/ourchat.apk && sed -i 's/APP_VERSION_CODE=4/APP_VERSION_CODE=5/' /home/ubuntu/ourchat-backend/.env && sed -i 's#APP_RELEASE_NOTES=\\\\\"Real push notifications — now you get notified even when the app is fully closed.\\\\\"#APP_RELEASE_NOTES=\\\\\"Call notifications, and fixed a stuck notification banner.\\\\\"#' /home/ubuntu/ourchat-backend/.env && pm2 restart ourchat-backend > /dev/null && sleep 1 && curl -s https://ourchat.safeshare.co/app-version\")",
       "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'PGPASSWORD=$\\(grep DATABASE_URL /home/ubuntu/ourchat-backend/.env | sed -n '\\\\''s#.*://ourchat:\\\\\\([^@]*\\\\\\)@.*#\\\\1#p'\\\\''\\) psql -U ourchat -h localhost -d ourchat -c \" *)",
-      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'cd /home/ubuntu/ourchat-backend && for uid in 10cad502-1dbd-40e9-af39-78d0490323cb 2a285b41-ab9f-43bf-8ef7-cfb2cecd29d1 bb6a1112-e2f7-451b-a66d-f12d555bac6d; do *)"
+      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'cd /home/ubuntu/ourchat-backend && for uid in 10cad502-1dbd-40e9-af39-78d0490323cb 2a285b41-ab9f-43bf-8ef7-cfb2cecd29d1 bb6a1112-e2f7-451b-a66d-f12d555bac6d; do *)",
+      "Bash(git check-ignore *)",
+      "Bash(python3 -c ' *)",
+      "Bash(unzip -p \"app/build/app/outputs/flutter-apk/app-release.apk\" \"res/values/strings.xml\")",
+      "Bash(python3 -)"
     ],
     "additionalDirectories": [
       "C:\\Users\\user\\Downloads"
