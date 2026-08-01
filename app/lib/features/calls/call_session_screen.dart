@@ -10,6 +10,7 @@ import '../../core/socket_service.dart';
 import '../../core/call_ringtone_service.dart';
 import '../../core/notification_service.dart';
 import '../chat/state/chat_providers.dart';
+import '../chat/data/conversations_api.dart';
 import '../posts/data/post_models.dart';
 import 'call_models.dart';
 
@@ -47,6 +48,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
   final _random = Random.secure();
   final _queuedCandidates = <CallIceCandidate>[];
   final _outgoingIce = <RTCIceCandidate>[];
+  final _seenIceCandidates = <String>{};
 
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
@@ -56,6 +58,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
   StreamSubscription<String>? _readySub;
   StreamSubscription<CallNotificationAction>? _notificationActionSub;
   Timer? _durationTimer;
+  Timer? _connectionTimeout;
   String? _callId;
   bool _remoteDescriptionSet = false;
   bool _offerReady = false;
@@ -148,6 +151,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
         type: offer.type!,
         sdp: offer.sdp!,
       );
+      _startConnectionTimeout();
     } catch (error) {
       if (mounted) setState(() => _error = _mediaError(error));
     } finally {
@@ -183,7 +187,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
         type: answer.type!,
         sdp: answer.sdp!,
       );
-      _setConnected();
+      _startConnectionTimeout();
     } catch (error) {
       if (mounted) setState(() => _error = _mediaError(error));
     } finally {
@@ -192,8 +196,14 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
   }
 
   Future<void> _prepareConnection() async {
+    final iceServers = await _loadIceServers();
     final stream = await navigator.mediaDevices.getUserMedia({
-      'audio': true,
+      'audio': {
+        'echoCancellation': true,
+        'noiseSuppression': true,
+        'autoGainControl': true,
+        'channelCount': 1,
+      },
       'video': widget.kind == CallKind.video
           ? {
               'facingMode': 'user',
@@ -206,10 +216,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     if (widget.kind == CallKind.video) _localRenderer.srcObject = stream;
 
     final peerConnection = await createPeerConnection({
-      'iceServers': [
-        {'urls': 'stun:stun.l.google.com:19302'},
-        {'urls': 'stun:stun1.l.google.com:19302'},
-      ],
+      'iceServers': iceServers,
       'sdpSemantics': 'unified-plan',
     });
     _peerConnection = peerConnection;
@@ -220,7 +227,6 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
       if (event.streams.isEmpty) return;
       _remoteRenderer.srcObject = event.streams.first;
       if (mounted) setState(() {});
-      _setConnected();
     };
     peerConnection.onIceCandidate = (candidate) {
       final callId = _callId;
@@ -243,6 +249,25 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
         _handleRemoteEnd('Connection lost');
       }
     };
+    try {
+      _speakerOn = widget.kind == CallKind.video;
+      await Helper.setSpeakerphoneOn(_speakerOn);
+    } catch (_) {
+      // Desktop and some Android audio routes do not expose speaker routing.
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadIceServers() async {
+    try {
+      final servers = await ref.read(conversationsApiProvider).fetchCallIceServers();
+      if (servers.isNotEmpty) return servers;
+    } on ConversationsApiException {
+      // An older backend should still allow a best-effort direct STUN call.
+    }
+    return const [
+      {'urls': 'stun:stun.l.google.com:19302'},
+      {'urls': 'stun:stun1.l.google.com:19302'},
+    ];
   }
 
   void _flushOutgoingIce() {
@@ -268,10 +293,11 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     );
     _remoteDescriptionSet = true;
     await _flushCandidates();
-    _setConnected();
   }
 
   Future<void> _handleIceCandidate(CallIceCandidate candidate) async {
+    final key = '${candidate.candidate}|${candidate.sdpMid}|${candidate.sdpMLineIndex}';
+    if (!_seenIceCandidates.add(key)) return;
     if (_peerConnection == null || !_remoteDescriptionSet) {
       _queuedCandidates.add(candidate);
       return;
@@ -288,7 +314,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
   Future<void> _flushCandidates() async {
     final callId = _callId;
     if (callId == null) return;
-    _queuedCandidates.addAll(_socket?.takePendingIce(callId) ?? const []);
+    final pending = _socket?.takePendingIce(callId) ?? const <CallIceCandidate>[];
     while (_queuedCandidates.isNotEmpty) {
       final candidate = _queuedCandidates.removeAt(0);
       await _peerConnection?.addCandidate(
@@ -299,14 +325,28 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
         ),
       );
     }
+    // SocketService retains candidates that arrived before this screen was
+    // mounted. Candidates also delivered live are deduplicated above.
+    for (final candidate in pending) {
+      await _handleIceCandidate(candidate);
+    }
   }
 
   void _setConnected() {
     if (!mounted || _connected) return;
     setState(() => _connected = true);
+    _connectionTimeout?.cancel();
     CallRingtoneService.instance.stop();
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _seconds++);
+    });
+  }
+
+  void _startConnectionTimeout() {
+    _connectionTimeout?.cancel();
+    _connectionTimeout = Timer(const Duration(seconds: 35), () {
+      if (_terminal || _connected) return;
+      _endCall(reason: 'connection_failed');
     });
   }
 
@@ -375,6 +415,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
 
   Future<void> _disposeMedia() async {
     _durationTimer?.cancel();
+    _connectionTimeout?.cancel();
     CallRingtoneService.instance.stop();
     final stream = _localStream;
     _localStream = null;
@@ -393,6 +434,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     _readySub?.cancel();
     _notificationActionSub?.cancel();
     _durationTimer?.cancel();
+    _connectionTimeout?.cancel();
     if (!_terminal) {
       final callId = _callId ?? widget.offer?.callId;
       if (callId != null) _socket?.endCall(callId, reason: 'ended');

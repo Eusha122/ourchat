@@ -6,6 +6,7 @@ import { fetchLinkMetadata } from "../lib/linkMetadata";
 import { sendMessagePush } from "../lib/push";
 import { postAuthorSelect, toPublicMessage } from "../lib/serializers";
 import { uploadFile } from "../lib/storage";
+import { iceServersForUser } from "../lib/turn";
 import { getIO } from "../socket";
 import {
   messagesQuerySchema,
@@ -190,6 +191,13 @@ conversationsRouter.get("/", requireAuth, async (req, res) => {
   });
 
   res.json({ conversations: results });
+});
+
+// Kept authenticated so TURN credentials are never exposed as a public API.
+// Credentials are short-lived and unique per signed-in account.
+conversationsRouter.get("/call-ice-servers", requireAuth, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({ iceServers: iceServersForUser(req.userId!) });
 });
 
 conversationsRouter.get("/:conversationId", requireAuth, async (req, res) => {

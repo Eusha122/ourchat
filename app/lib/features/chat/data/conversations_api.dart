@@ -83,6 +83,22 @@ class ConversationsApi {
     });
   }
 
+  /// Fetches short-lived TURN credentials plus public STUN fallback servers.
+  /// The credentials are minted by the authenticated backend and never baked
+  /// into the APK, allowing calls to relay across restrictive home/mobile NATs.
+  Future<List<Map<String, dynamic>>> fetchCallIceServers() async {
+    return _handle(() async {
+      final response = await _dio.get('/conversations/call-ice-servers');
+      final data = response.data as Map<String, dynamic>;
+      final servers = data['iceServers'];
+      if (servers is! List) return const [];
+      return servers
+          .whereType<Map>()
+          .map((server) => Map<String, dynamic>.from(server))
+          .toList(growable: false);
+    });
+  }
+
   Future<ChatMessage> sendLink(String conversationId, String linkUrl) async {
     return _handle(() async {
       final response = await _dio.post(
