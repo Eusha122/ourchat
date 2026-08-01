@@ -42,6 +42,7 @@ class AlbumItem {
     required this.type,
     required this.uploader,
     required this.createdAt,
+    this.caption,
   });
 
   factory AlbumItem.fromJson(Map<String, dynamic> json) {
@@ -55,6 +56,7 @@ class AlbumItem {
       },
       uploader: PostAuthor.fromJson(json['uploader'] as Map<String, dynamic>),
       createdAt: DateTime.parse(json['createdAt'] as String),
+      caption: json['caption'] as String?,
     );
   }
 
@@ -64,6 +66,7 @@ class AlbumItem {
   final AlbumItemType type;
   final PostAuthor uploader;
   final DateTime createdAt;
+  final String? caption;
 
   /// Grid cells prefer the cheap derived crop when the backend produced one.
   String get displayUrl => thumbnailUrl ?? url;

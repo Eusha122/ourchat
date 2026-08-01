@@ -230,6 +230,7 @@ model AlbumItem {
   thumbnailUrl String?
   width        Int?
   height       Int?
+  caption      String?
   createdAt    DateTime      @default(now())
 
   @@index([albumId, createdAt])

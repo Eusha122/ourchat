@@ -68,10 +68,13 @@ class AlbumsApi {
     required String albumId,
     required String filePath,
     required String fileName,
+    String? caption,
   }) async {
     return _handle(() async {
       final form = FormData.fromMap({
         'file': await MultipartFile.fromFile(filePath, filename: fileName),
+        if (caption != null && caption.trim().isNotEmpty)
+          'caption': caption.trim(),
       });
       final response = await _dio.post(
         '/albums/$albumId/items',

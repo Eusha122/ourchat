@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../auth/state/auth_controller.dart';
 import '../../posts/data/post_models.dart' show PostAuthor;
 import '../../users/state/users_providers.dart';
 import '../data/album_models.dart';
@@ -150,6 +151,8 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
           final album = _albums[index - 1];
           return _AlbumTile(
             album: album,
+            myAvatarUrl:
+                ref.watch(authControllerProvider).value?.user?.avatarUrl,
             onTap: () async {
               await context.push('/gallery/${album.id}');
               _load();
@@ -248,9 +251,14 @@ class _CreateAlbumTileState extends State<_CreateAlbumTile> {
 }
 
 class _AlbumTile extends StatelessWidget {
-  const _AlbumTile({required this.album, required this.onTap});
+  const _AlbumTile({
+    required this.album,
+    required this.myAvatarUrl,
+    required this.onTap,
+  });
 
   final Album album;
+  final String? myAvatarUrl;
   final VoidCallback onTap;
 
   @override
@@ -269,31 +277,31 @@ class _AlbumTile extends StatelessWidget {
           Expanded(
             child: ClipRRect(
               borderRadius: BorderRadius.circular(22),
-              child: album.coverUrl == null
-                  ? DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            _purpleEnd.withValues(alpha: 0.22),
-                            _purple.withValues(alpha: 0.32),
-                          ],
-                        ),
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          Icons.photo_library_rounded,
-                          color: Colors.white,
-                          size: 30,
-                        ),
-                      ),
-                    )
-                  : CachedNetworkImage(
-                      imageUrl: album.coverUrl!,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                    ),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      _purpleEnd.withValues(alpha: 0.16),
+                      _purple.withValues(alpha: 0.24),
+                    ],
+                  ),
+                ),
+                // Who has access matters more here than a random photo, so
+                // the cover is the two members' avatars rather than
+                // whichever picture happened to be uploaded first.
+                child: Center(
+                  child: _OverlappingAvatars(
+                    backUrl: myAvatarUrl,
+                    backFallback: '?',
+                    frontUrl: other?.avatarUrl,
+                    frontFallback: other?.username.isNotEmpty == true
+                        ? other!.username.characters.first.toUpperCase()
+                        : '?',
+                  ),
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 9),
@@ -321,6 +329,96 @@ class _AlbumTile extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Two circles offset like a Venn diagram — the back one (you) sits behind
+/// and to the left, the front one (them) overlaps on top and to the right.
+class _OverlappingAvatars extends StatelessWidget {
+  const _OverlappingAvatars({
+    required this.backUrl,
+    required this.backFallback,
+    required this.frontUrl,
+    required this.frontFallback,
+  });
+
+  final String? backUrl;
+  final String backFallback;
+  final String? frontUrl;
+  final String frontFallback;
+
+  static const double _size = 72;
+  static const double _overlap = 26;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _size * 2 - _overlap,
+      height: _size,
+      child: Stack(
+        children: [
+          Positioned(
+            left: 0,
+            child: _RingedAvatar(url: backUrl, fallback: backFallback),
+          ),
+          Positioned(
+            left: _size - _overlap,
+            child: _RingedAvatar(url: frontUrl, fallback: frontFallback),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RingedAvatar extends StatelessWidget {
+  const _RingedAvatar({required this.url, required this.fallback});
+
+  final String? url;
+  final String fallback;
+
+  @override
+  Widget build(BuildContext context) {
+    final placeholder = DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [_purpleEnd, _purple],
+        ),
+        shape: BoxShape.circle,
+      ),
+      child: Center(
+        child: Text(
+          fallback,
+          style: const TextStyle(
+            fontFamily: 'Poppins',
+            color: Colors.white,
+            fontSize: 23,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+
+    return Container(
+      width: _OverlappingAvatars._size,
+      height: _OverlappingAvatars._size,
+      padding: const EdgeInsets.all(2.5),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+      ),
+      child: ClipOval(
+        child: url == null
+            ? placeholder
+            : CachedNetworkImage(
+                imageUrl: url!,
+                fit: BoxFit.cover,
+                errorWidget: (_, _, _) => placeholder,
+              ),
       ),
     );
   }
@@ -672,6 +770,9 @@ class _RoundedField extends StatelessWidget {
               decoration: InputDecoration(
                 hintText: hint,
                 border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(vertical: 15),
                 hintStyle: const TextStyle(

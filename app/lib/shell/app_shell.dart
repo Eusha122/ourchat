@@ -24,7 +24,10 @@ class AppShell extends ConsumerWidget {
         const {'chats', 'gallery', 'search', 'profile'}.contains(segments.first);
 
     if (!isRootDestination) {
-      return navigationShell;
+      // Still needs a Material ancestor: during a route transition (or a
+      // redirect such as logout) a branch can briefly build here without the
+      // chrome below, and bare TextFields assert without one.
+      return Material(type: MaterialType.transparency, child: navigationShell);
     }
 
     return DecoratedBox(

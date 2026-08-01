@@ -91,7 +91,26 @@
       "Bash(python3 -c ' *)",
       "Bash(unzip -p \"app/build/app/outputs/flutter-apk/app-release.apk\" \"res/values/strings.xml\")",
       "Bash(python3 -)",
-      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'cat /home/ubuntu/ourchat-backend/prisma/migrations/20260801182224_add_shared_albums/migration.sql')"
+      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'cat /home/ubuntu/ourchat-backend/prisma/migrations/20260801182224_add_shared_albums/migration.sql')",
+      "Bash(curl -s -o /dev/null -w \"thumbnail HTTP status: %{http_code}\\\\ncontent-type: %{content_type}\\\\nsize: %{size_download} bytes\\\\n\" \"https://res.cloudinary.com/rd9i25zf/image/upload/c_fill,w_500,h_500,q_auto,f_auto/v1785609782/ourchat/albums/s1s3r2gka0nnyr5adxsl.jpg\")",
+      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'PGPASSWORD=$\\(grep DATABASE_URL /home/ubuntu/ourchat-backend/.env | sed -n '\\\\''s#.*://ourchat:\\\\\\([^@]*\\\\\\)@.*#\\\\1#p'\\\\''\\) psql -U ourchat -h localhost -d ourchat -q -c \"DELETE FROM \\\\\"Album\\\\\" WHERE name='\\\\''cloudinary test'\\\\'';\" -c \"SELECT COUNT\\(*\\) FROM \\\\\"Album\\\\\";\"')",
+      "Bash(\"F:\\\\flutter\\\\bin\\\\flutter.bat\" run *)",
+      "Bash(echo \"launched, pid $!\")",
+      "Read(//tmp/**)",
+      "Bash(PowerShell -Command \"Get-Process ourchat -ErrorAction SilentlyContinue | Select ProcessName,Id,StartTime\")",
+      "Bash(scp -q -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' 'f:/ecripted chat/backend/prisma/schema.prisma' ubuntu@13.232.202.161:/home/ubuntu/ourchat-backend/prisma/schema.prisma)",
+      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'sudo -u postgres psql -q -c '\\\\''ALTER USER ourchat CREATEDB;'\\\\'' && cd /home/ubuntu/ourchat-backend && npx prisma migrate dev --create-only --name add_album_item_caption 2>&1 | tail -6')",
+      "Bash(PowerShell -Command \"Get-Process ourchat -ErrorAction SilentlyContinue | Select ProcessName,Id,MainWindowTitle\")",
+      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'PGPASSWORD=$\\(grep DATABASE_URL /home/ubuntu/ourchat-backend/.env | sed -n '\\\\''s#.*://ourchat:\\\\\\([^@]*\\\\\\)@.*#\\\\1#p'\\\\''\\) psql -U ourchat -h localhost -d ourchat -q -c \"DELETE FROM \\\\\"Album\\\\\" WHERE name='\\\\''caption test'\\\\'';\"')",
+      "Bash(PowerShell -Command \"Get-Process ourchat -ErrorAction SilentlyContinue | Stop-Process -Force\")",
+      "Bash(PowerShell -Command \"Get-Process -Name dart,flutter_tools -ErrorAction SilentlyContinue | Select Id,ProcessName\")",
+      "Bash(PowerShell -Command 'Get-CimInstance Win32_Process | Where-Object { $_.Name -eq '\\\\''dart.exe'\\\\'' } | Select-Object ProcessId, CommandLine | Format-List')",
+      "Bash(rm -f \"f:/ecripted chat/scratch\"*.png)",
+      "Bash(PowerShell -Command \"Get-Process ourchat -ErrorAction SilentlyContinue | Select ProcessName,Id,Responding\")",
+      "Bash(nohup \"F:\\\\flutter\\\\bin\\\\flutter.bat\" run -d windows --dart-define=API_BASE_URL=https://ourchat.safeshare.co)",
+      "Bash(\"F:\\\\flutter\\\\bin\\\\flutter.bat\" pub *)",
+      "Bash(grep -n \"EXCEPTION CAUGHT\\\\|The following\\\\|Failed assertion\\\\|Overflowed\" /tmp/win_prod.log | head -20)",
+      "Bash(grep -c \"EXCEPTION CAUGHT\" /tmp/win_prod2.log 2>/dev/null || echo \"0 exceptions\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\user\\Downloads"

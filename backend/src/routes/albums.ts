@@ -158,6 +158,7 @@ albumsRouter.get("/:albumId", requireAuth, async (req, res) => {
       type: item.type,
       width: item.width,
       height: item.height,
+      caption: item.caption,
       createdAt: item.createdAt,
       uploader: item.uploader,
     })),
@@ -179,6 +180,12 @@ async function handleUpload(req: Request, res: Response) {
   const dotIndex = originalName.lastIndexOf(".");
   const extension = dotIndex >= 0 ? originalName.slice(dotIndex + 1) : "bin";
 
+  const rawCaption = req.body?.caption;
+  const caption =
+    typeof rawCaption === "string" && rawCaption.trim().length > 0
+      ? rawCaption.trim().slice(0, 500)
+      : null;
+
   const stored = await uploadAlbumMedia({
     buffer: req.file.buffer,
     contentType: req.file.mimetype,
@@ -192,6 +199,7 @@ async function handleUpload(req: Request, res: Response) {
       uploaderId: req.userId!,
       url: stored.url,
       thumbnailUrl: stored.thumbnailUrl,
+      caption,
       type: stored.isVideo ? "VIDEO" : "IMAGE",
       width: stored.width,
       height: stored.height,
@@ -213,6 +221,7 @@ async function handleUpload(req: Request, res: Response) {
       type: item.type,
       width: item.width,
       height: item.height,
+      caption: item.caption,
       createdAt: item.createdAt,
       uploader: item.uploader,
     },

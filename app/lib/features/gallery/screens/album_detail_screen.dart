@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -55,24 +57,45 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
     final files = await picker.pickMultipleMedia();
     if (files.isEmpty || !mounted) return;
 
-    setState(() => _uploading = files.length);
     final api = ref.read(albumsApiProvider);
     final added = <AlbumItem>[];
     String? failure;
 
-    for (final file in files) {
+    // One caption prompt per file, in sequence, rather than one shared
+    // caption for the whole batch — each photo gets its own comment.
+    for (var i = 0; i < files.length; i++) {
+      final file = files[i];
+      if (!mounted) break;
+      // Not dismissible: returning from the native picker delivers a stray
+      // pointer event that was landing on the barrier and closing this
+      // instantly, so the upload ran before the caption could be typed.
+      final caption = await showModalBottomSheet<String>(
+        context: context,
+        isScrollControlled: true,
+        isDismissible: false,
+        enableDrag: false,
+        backgroundColor: Colors.transparent,
+        builder: (_) => _CaptionSheet(
+          file: file,
+          position: files.length > 1 ? '${i + 1} of ${files.length}' : null,
+        ),
+      );
+      if (!mounted) break;
+
+      setState(() => _uploading++);
       try {
         added.add(
           await api.uploadItem(
             albumId: widget.albumId,
             filePath: file.path,
             fileName: file.name,
+            caption: caption,
           ),
         );
       } on AlbumsApiException catch (error) {
         failure = error.message;
       } finally {
-        if (mounted) setState(() => _uploading = _uploading - 1);
+        if (mounted) setState(() => _uploading--);
       }
     }
 
@@ -93,16 +116,12 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
   }
 
   Future<void> _open(AlbumItem item) async {
-    if (item.type == AlbumItemType.video) {
-      // Handed to the device's own player rather than bundling a video
-      // engine into the app.
-      await launchUrl(Uri.parse(item.url), mode: LaunchMode.externalApplication);
-      return;
-    }
-    if (!mounted) return;
+    final items = _detail?.items ?? const <AlbumItem>[];
+    final index = items.indexWhere((candidate) => candidate.id == item.id);
+    if (index == -1) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => _AlbumImageViewer(imageUrl: item.url),
+        builder: (_) => _AlbumImageViewer(items: items, initialIndex: index),
       ),
     );
   }
@@ -405,25 +424,400 @@ class _UploadButton extends StatelessWidget {
   }
 }
 
-class _AlbumImageViewer extends StatelessWidget {
-  const _AlbumImageViewer({required this.imageUrl});
+/// A true full-bleed viewer: no AppBar (even a transparent one still
+/// reserves its own height in the Scaffold's layout, which was shrinking the
+/// image into a letterboxed "frame" instead of using the whole display).
+/// The back button and caption float as overlays on top of an image that
+/// fills the entire screen, the way a device's own gallery app does.
+/// A true full-bleed, swipeable viewer. No AppBar (even a transparent one
+/// reserves its own height in the Scaffold's layout, which was letterboxing
+/// the photo into a "frame"); the back button and caption float on top of an
+/// image that fills the whole display, the way a device gallery app does.
+class _AlbumImageViewer extends StatefulWidget {
+  const _AlbumImageViewer({required this.items, required this.initialIndex});
 
-  final String imageUrl;
+  final List<AlbumItem> items;
+  final int initialIndex;
+
+  @override
+  State<_AlbumImageViewer> createState() => _AlbumImageViewerState();
+}
+
+class _AlbumImageViewerState extends State<_AlbumImageViewer> {
+  late final PageController _controller = PageController(
+    initialPage: widget.initialIndex,
+  );
+  late int _index = widget.initialIndex;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final item = widget.items[_index];
+    final name = item.uploader.displayName?.isNotEmpty == true
+        ? item.uploader.displayName!
+        : '@${item.uploader.username}';
+
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          PageView.builder(
+            controller: _controller,
+            itemCount: widget.items.length,
+            onPageChanged: (page) => setState(() => _index = page),
+            itemBuilder: (context, index) {
+              final pageItem = widget.items[index];
+              if (pageItem.type == AlbumItemType.video) {
+                return _VideoPage(item: pageItem);
+              }
+              // SizedBox.expand makes BoxFit.contain size against the full
+              // screen rather than the image's intrinsic pixels, so
+              // InteractiveViewer pans and zooms across the entire display.
+              return InteractiveViewer(
+                minScale: 1,
+                maxScale: 5,
+                child: SizedBox.expand(
+                  child: CachedNetworkImage(
+                    imageUrl: pageItem.url,
+                    fit: BoxFit.contain,
+                    placeholder: (_, _) => const Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation(Colors.white24),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Row(
+                  children: [
+                    DecoratedBox(
+                      decoration: const BoxDecoration(
+                        color: Color(0x66000000),
+                        shape: BoxShape.circle,
+                      ),
+                      child: IconButton(
+                        icon: const Icon(
+                          Icons.arrow_back_rounded,
+                          color: Colors.white,
+                        ),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ),
+                    const Spacer(),
+                    if (widget.items.length > 1)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0x66000000),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Text(
+                          '${_index + 1} / ${widget.items.length}',
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(width: 6),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: IgnorePointer(
+              child: SafeArea(
+                top: false,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(20, 40, 20, 18),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0x00000000), Color(0xB0000000)],
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (item.caption?.isNotEmpty == true) ...[
+                        Text(
+                          item.caption!,
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            color: Colors.white,
+                            fontSize: 13.5,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      Text(
+                        'Uploaded by $name',
+                        style: const TextStyle(
+                          fontFamily: 'Poppins',
+                          color: Color(0xFFD8D8D8),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
-      body: Center(
-        child: InteractiveViewer(
-          minScale: 0.8,
-          maxScale: 4,
-          child: CachedNetworkImage(imageUrl: imageUrl, fit: BoxFit.contain),
+    );
+  }
+}
+
+/// Videos stay in the swipe order so paging matches the grid, but playback
+/// is handed to the device's own player rather than bundling a video engine.
+class _VideoPage extends StatelessWidget {
+  const _VideoPage({required this.item});
+
+  final AlbumItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (item.thumbnailUrl != null)
+          CachedNetworkImage(imageUrl: item.thumbnailUrl!, fit: BoxFit.contain),
+        Center(
+          child: GestureDetector(
+            onTap: () => launchUrl(
+              Uri.parse(item.url),
+              mode: LaunchMode.externalApplication,
+            ),
+            child: Container(
+              width: 74,
+              height: 74,
+              decoration: const BoxDecoration(
+                color: Color(0x88000000),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.play_arrow_rounded,
+                color: Colors.white,
+                size: 42,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Preview-and-comment step shown once per picked file before it uploads.
+class _CaptionSheet extends StatefulWidget {
+  const _CaptionSheet({required this.file, this.position});
+
+  final XFile file;
+  final String? position;
+
+  @override
+  State<_CaptionSheet> createState() => _CaptionSheetState();
+}
+
+class _CaptionSheetState extends State<_CaptionSheet> {
+  final _controller = TextEditingController();
+
+  bool get _isVideo {
+    final ext = widget.file.name.toLowerCase();
+    return ext.endsWith('.mp4') ||
+        ext.endsWith('.mov') ||
+        ext.endsWith('.m4v') ||
+        ext.endsWith('.webm');
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+        ),
+        padding: const EdgeInsets.fromLTRB(22, 12, 22, 22),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE2E1EC),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Text(
+                  'Add a comment',
+                  style: const TextStyle(
+                    fontFamily: 'Poppins',
+                    color: _ink,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+                if (widget.position != null) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    widget.position!,
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      color: Color(0xFF9A9AA5),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 14),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: SizedBox(
+                width: double.infinity,
+                height: 180,
+                child: _isVideo
+                    ? const ColoredBox(
+                        color: Color(0xFFF4F3FF),
+                        child: Icon(
+                          Icons.videocam_rounded,
+                          color: _purple,
+                          size: 34,
+                        ),
+                      )
+                    : Image.file(File(widget.file.path), fit: BoxFit.cover),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F4FC),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: TextField(
+                controller: _controller,
+                autofocus: true,
+                maxLines: 3,
+                minLines: 1,
+                style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 13,
+                  color: _ink,
+                ),
+                decoration: const InputDecoration(
+                  hintText: 'Write a comment (optional)',
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  filled: false,
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(vertical: 15),
+                  hintStyle: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 13,
+                    color: Color(0xFF9A9AA5),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                // The sheet is deliberately barrier-proof, so skipping needs
+                // to be an explicit action rather than a tap-outside.
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(''),
+                  child: const Text(
+                    'Skip',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 13,
+                      color: Color(0xFF9A9AA5),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: _submit,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _purple,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    child: const Text(
+                      'Post',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
