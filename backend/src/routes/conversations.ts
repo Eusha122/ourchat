@@ -359,7 +359,7 @@ async function handleSendMessage(req: Request, res: Response) {
 
   const participants = await prisma.conversationParticipant.findMany({
     where: { conversationId },
-    select: { userId: true },
+    select: { userId: true, mutedMessages: true },
   });
 
   const io = getIO();
@@ -394,8 +394,8 @@ async function handleSendMessage(req: Request, res: Response) {
   // never fail the send itself.
   const senderName = message.sender.displayName || `@${message.sender.username}`;
   const preview = messagePreviewText(message);
-  for (const { userId } of participants) {
-    if (userId === req.userId) continue;
+  for (const { userId, mutedMessages } of participants) {
+    if (userId === req.userId || mutedMessages) continue;
     sendMessagePush(userId, {
       title: senderName,
       body: preview,

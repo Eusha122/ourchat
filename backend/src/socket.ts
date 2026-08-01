@@ -318,13 +318,16 @@ export function initSocket(httpServer: HttpServer): Server {
         // Reaches the callee even if they have no socket connected at all
         // right now (app closed); the actual offer above is replayed to them
         // over the socket once they reconnect, within the 35s call window —
-        // see the `connection` handler's activeCalls resync.
-        sendCallPush(callee.userId, {
-          callId,
-          conversationId: data.conversationId,
-          callerName: caller.user.displayName || `@${caller.user.username}`,
-          isVideo: data.kind === "video",
-        }).catch((error) => console.error("call push send failed", error));
+        // see the `connection` handler's activeCalls resync. Skipped if
+        // they've muted calls from this conversation.
+        if (!callee.mutedCalls) {
+          sendCallPush(callee.userId, {
+            callId,
+            conversationId: data.conversationId,
+            callerName: caller.user.displayName || `@${caller.user.username}`,
+            isVideo: data.kind === "video",
+          }).catch((error) => console.error("call push send failed", error));
+        }
       })().catch((error) => console.error("call offer relay failed", error));
     });
 
