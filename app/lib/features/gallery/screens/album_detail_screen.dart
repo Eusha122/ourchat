@@ -1,10 +1,11 @@
-import 'dart:io';
-
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:video_player/video_player.dart';
 
 import '../data/album_models.dart';
 import '../data/albums_api.dart';
@@ -13,6 +14,13 @@ import '../state/gallery_providers.dart';
 const _ink = Color(0xFF1B1B1B);
 const _purple = Color(0xFF5D4EF5);
 const _purpleEnd = Color(0xFF6C63FF);
+
+/// video_player ships Android/iOS implementations only; on desktop the
+/// controller would throw MissingPluginException, so those platforms hand
+/// playback to the OS instead.
+bool get _hasInlineVideo =>
+    defaultTargetPlatform == TargetPlatform.android ||
+    defaultTargetPlatform == TargetPlatform.iOS;
 
 class AlbumDetailScreen extends ConsumerStatefulWidget {
   const AlbumDetailScreen({super.key, required this.albumId});
@@ -27,7 +35,19 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
   AlbumDetail? _detail;
   bool _isLoading = true;
   String? _error;
-  int _uploading = 0;
+
+  // Batch upload progress, spread across every file in the batch so the
+  // button reads 0-100% for the whole selection rather than per file.
+  int _batchTotal = 0;
+  int _batchDone = 0;
+  double _currentFraction = 0;
+
+  bool get _isUploading => _batchTotal > 0;
+
+  double get _uploadProgress {
+    if (_batchTotal == 0) return 0;
+    return ((_batchDone + _currentFraction) / _batchTotal).clamp(0.0, 1.0);
+  }
 
   @override
   void initState() {
@@ -41,7 +61,9 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
       _error = null;
     });
     try {
-      final detail = await ref.read(albumsApiProvider).fetchAlbum(widget.albumId);
+      final detail = await ref
+          .read(albumsApiProvider)
+          .fetchAlbum(widget.albumId);
       if (!mounted) return;
       setState(() => _detail = detail);
     } on AlbumsApiException catch (error) {
@@ -53,61 +75,59 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
   }
 
   Future<void> _pickAndUpload() async {
+    if (_isUploading) return;
+
     final picker = ImagePicker();
     final files = await picker.pickMultipleMedia();
     if (files.isEmpty || !mounted) return;
+
+    setState(() {
+      _batchTotal = files.length;
+      _batchDone = 0;
+      _currentFraction = 0;
+    });
 
     final api = ref.read(albumsApiProvider);
     final added = <AlbumItem>[];
     String? failure;
 
-    // One caption prompt per file, in sequence, rather than one shared
-    // caption for the whole batch — each photo gets its own comment.
-    for (var i = 0; i < files.length; i++) {
-      final file = files[i];
+    for (final file in files) {
       if (!mounted) break;
-      // Not dismissible: returning from the native picker delivers a stray
-      // pointer event that was landing on the barrier and closing this
-      // instantly, so the upload ran before the caption could be typed.
-      final caption = await showModalBottomSheet<String>(
-        context: context,
-        isScrollControlled: true,
-        isDismissible: false,
-        enableDrag: false,
-        backgroundColor: Colors.transparent,
-        builder: (_) => _CaptionSheet(
-          file: file,
-          position: files.length > 1 ? '${i + 1} of ${files.length}' : null,
-        ),
-      );
-      if (!mounted) break;
-
-      setState(() => _uploading++);
       try {
         added.add(
           await api.uploadItem(
             albumId: widget.albumId,
             filePath: file.path,
             fileName: file.name,
-            caption: caption,
+            onProgress: (fraction) {
+              if (mounted) setState(() => _currentFraction = fraction);
+            },
           ),
         );
       } on AlbumsApiException catch (error) {
         failure = error.message;
       } finally {
-        if (mounted) setState(() => _uploading--);
+        if (mounted) {
+          setState(() {
+            _batchDone++;
+            _currentFraction = 0;
+          });
+        }
       }
     }
 
     if (!mounted) return;
-    if (added.isNotEmpty && _detail != null) {
-      setState(() {
+    setState(() {
+      _batchTotal = 0;
+      _batchDone = 0;
+      _currentFraction = 0;
+      if (added.isNotEmpty && _detail != null) {
         _detail = AlbumDetail(
           album: _detail!.album,
           items: [...added.reversed, ..._detail!.items],
         );
-      });
-    }
+      }
+    });
     if (failure != null) {
       ScaffoldMessenger.of(
         context,
@@ -121,7 +141,7 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
     if (index == -1) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => _AlbumImageViewer(items: items, initialIndex: index),
+        builder: (_) => _AlbumViewer(items: items, initialIndex: index),
       ),
     );
   }
@@ -139,7 +159,6 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Header card, matching the conversation screen's treatment.
             Container(
               decoration: BoxDecoration(
                 color: Colors.white,
@@ -198,10 +217,8 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
           ],
         ),
       ),
-      // Sits on the right, low on the screen — clear of the content but
-      // still within thumb reach.
       floatingActionButton: _UploadButton(
-        busy: _uploading > 0,
+        progress: _isUploading ? _uploadProgress : null,
         onTap: _pickAndUpload,
       ),
     );
@@ -341,9 +358,8 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                   CachedNetworkImage(
                     imageUrl: item.displayUrl,
                     fit: BoxFit.cover,
-                    placeholder: (_, _) => const ColoredBox(
-                      color: Color(0xFFEDECF7),
-                    ),
+                    placeholder: (_, _) =>
+                        const ColoredBox(color: Color(0xFFEDECF7)),
                     errorWidget: (_, _, _) => const ColoredBox(
                       color: Color(0xFFEDECF7),
                       child: Icon(
@@ -380,14 +396,21 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
   }
 }
 
+/// Doubles as the upload indicator: a determinate ring around the percentage
+/// while a batch is in flight, so bulk uploads show real progress instead of
+/// an opaque spinner.
 class _UploadButton extends StatelessWidget {
-  const _UploadButton({required this.busy, required this.onTap});
+  const _UploadButton({required this.progress, required this.onTap});
 
-  final bool busy;
+  /// Null when idle; 0.0-1.0 while uploading.
+  final double? progress;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    final value = progress;
+    final busy = value != null;
+
     return GestureDetector(
       onTap: busy ? null : onTap,
       child: Container(
@@ -410,13 +433,39 @@ class _UploadButton extends StatelessWidget {
           ],
         ),
         child: busy
-            ? const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.2,
-                  valueColor: AlwaysStoppedAnimation(Colors.white),
-                ),
+            ? Stack(
+                alignment: Alignment.center,
+                children: [
+                  SizedBox(
+                    width: 46,
+                    height: 46,
+                    child: TweenAnimationBuilder<double>(
+                      // Smooths the jumps between chunk callbacks so the ring
+                      // sweeps instead of stepping.
+                      tween: Tween(begin: 0, end: value),
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOut,
+                      builder: (context, animated, _) =>
+                          CircularProgressIndicator(
+                            value: animated,
+                            strokeWidth: 3,
+                            backgroundColor: Colors.white24,
+                            valueColor: const AlwaysStoppedAnimation(
+                              Colors.white,
+                            ),
+                          ),
+                    ),
+                  ),
+                  Text(
+                    '${(value * 100).round()}',
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               )
             : const Icon(Icons.add_rounded, color: Colors.white, size: 30),
       ),
@@ -424,30 +473,24 @@ class _UploadButton extends StatelessWidget {
   }
 }
 
-/// A true full-bleed viewer: no AppBar (even a transparent one still
-/// reserves its own height in the Scaffold's layout, which was shrinking the
-/// image into a letterboxed "frame" instead of using the whole display).
-/// The back button and caption float as overlays on top of an image that
-/// fills the entire screen, the way a device's own gallery app does.
-/// A true full-bleed, swipeable viewer. No AppBar (even a transparent one
-/// reserves its own height in the Scaffold's layout, which was letterboxing
-/// the photo into a "frame"); the back button and caption float on top of an
-/// image that fills the whole display, the way a device gallery app does.
-class _AlbumImageViewer extends StatefulWidget {
-  const _AlbumImageViewer({required this.items, required this.initialIndex});
+/// Full-bleed, swipeable viewer. No AppBar — even a transparent one reserves
+/// layout height, which letterboxed the media into a "frame".
+class _AlbumViewer extends StatefulWidget {
+  const _AlbumViewer({required this.items, required this.initialIndex});
 
   final List<AlbumItem> items;
   final int initialIndex;
 
   @override
-  State<_AlbumImageViewer> createState() => _AlbumImageViewerState();
+  State<_AlbumViewer> createState() => _AlbumViewerState();
 }
 
-class _AlbumImageViewerState extends State<_AlbumImageViewer> {
+class _AlbumViewerState extends State<_AlbumViewer> {
   late final PageController _controller = PageController(
     initialPage: widget.initialIndex,
   );
   late int _index = widget.initialIndex;
+  bool _chromeVisible = true;
 
   @override
   void dispose() {
@@ -470,29 +513,42 @@ class _AlbumImageViewerState extends State<_AlbumImageViewer> {
           PageView.builder(
             controller: _controller,
             itemCount: widget.items.length,
-            onPageChanged: (page) => setState(() => _index = page),
+            onPageChanged: (page) => setState(() {
+              _index = page;
+              // Otherwise chrome hidden on a previous page leaves the next
+              // one with no visible back button.
+              _chromeVisible = true;
+            }),
             itemBuilder: (context, index) {
               final pageItem = widget.items[index];
               if (pageItem.type == AlbumItemType.video) {
-                return _VideoPage(item: pageItem);
+                return _VideoPage(
+                  key: ValueKey(pageItem.id),
+                  item: pageItem,
+                  // Only the visible page owns a decoder; swiping away
+                  // releases it so several videos never decode at once.
+                  isActive: index == _index,
+                  onToggleChrome: () =>
+                      setState(() => _chromeVisible = !_chromeVisible),
+                );
               }
-              // SizedBox.expand makes BoxFit.contain size against the full
-              // screen rather than the image's intrinsic pixels, so
-              // InteractiveViewer pans and zooms across the entire display.
-              return InteractiveViewer(
-                minScale: 1,
-                maxScale: 5,
-                child: SizedBox.expand(
-                  child: CachedNetworkImage(
-                    imageUrl: pageItem.url,
-                    fit: BoxFit.contain,
-                    placeholder: (_, _) => const Center(
-                      child: SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation(Colors.white24),
+              return GestureDetector(
+                onTap: () => setState(() => _chromeVisible = !_chromeVisible),
+                child: InteractiveViewer(
+                  minScale: 1,
+                  maxScale: 5,
+                  child: SizedBox.expand(
+                    child: CachedNetworkImage(
+                      imageUrl: pageItem.url,
+                      fit: BoxFit.contain,
+                      placeholder: (_, _) => const Center(
+                        child: SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation(Colors.white24),
+                          ),
                         ),
                       ),
                     ),
@@ -501,100 +557,94 @@ class _AlbumImageViewerState extends State<_AlbumImageViewer> {
               );
             },
           ),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: Row(
-                  children: [
-                    DecoratedBox(
-                      decoration: const BoxDecoration(
-                        color: Color(0x66000000),
-                        shape: BoxShape.circle,
-                      ),
-                      child: IconButton(
-                        icon: const Icon(
-                          Icons.arrow_back_rounded,
-                          color: Colors.white,
-                        ),
-                        onPressed: () => Navigator.of(context).pop(),
-                      ),
-                    ),
-                    const Spacer(),
-                    if (widget.items.length > 1)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0x66000000),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Text(
-                          '${_index + 1} / ${widget.items.length}',
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    const SizedBox(width: 6),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
+          AnimatedOpacity(
+            opacity: _chromeVisible ? 1 : 0,
+            duration: const Duration(milliseconds: 180),
             child: IgnorePointer(
-              child: SafeArea(
-                top: false,
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(20, 40, 20, 18),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Color(0x00000000), Color(0xB0000000)],
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (item.caption?.isNotEmpty == true) ...[
-                        Text(
-                          item.caption!,
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            color: Colors.white,
-                            fontSize: 13.5,
-                            height: 1.4,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                      Text(
-                        'Uploaded by $name',
-                        style: const TextStyle(
-                          fontFamily: 'Poppins',
-                          color: Color(0xFFD8D8D8),
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w500,
+              ignoring: !_chromeVisible,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: SafeArea(
+                      bottom: false,
+                      child: Padding(
+                        padding: const EdgeInsets.all(6),
+                        child: Row(
+                          children: [
+                            DecoratedBox(
+                              decoration: const BoxDecoration(
+                                color: Color(0x66000000),
+                                shape: BoxShape.circle,
+                              ),
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.arrow_back_rounded,
+                                  color: Colors.white,
+                                ),
+                                onPressed: () => Navigator.of(context).pop(),
+                              ),
+                            ),
+                            const Spacer(),
+                            if (widget.items.length > 1)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0x66000000),
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: Text(
+                                  '${_index + 1} / ${widget.items.length}',
+                                  style: const TextStyle(
+                                    fontFamily: 'Poppins',
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(width: 6),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
                   ),
-                ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: IgnorePointer(
+                      child: SafeArea(
+                        top: false,
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(20, 40, 20, 18),
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Color(0x00000000), Color(0xB0000000)],
+                            ),
+                          ),
+                          child: Text(
+                            'Uploaded by $name',
+                            style: const TextStyle(
+                              fontFamily: 'Poppins',
+                              color: Color(0xFFD8D8D8),
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -604,10 +654,262 @@ class _AlbumImageViewerState extends State<_AlbumImageViewer> {
   }
 }
 
-/// Videos stay in the swipe order so paging matches the grid, but playback
-/// is handed to the device's own player rather than bundling a video engine.
-class _VideoPage extends StatelessWidget {
-  const _VideoPage({required this.item});
+/// Inline player with Instagram-style behaviour: autoplays when its page is
+/// on screen, pauses and rewinds when swiped away, tap toggles play/pause,
+/// and a scrubbable progress bar sits at the bottom.
+class _VideoPage extends StatefulWidget {
+  const _VideoPage({
+    super.key,
+    required this.item,
+    required this.isActive,
+    required this.onToggleChrome,
+  });
+
+  final AlbumItem item;
+  final bool isActive;
+  final VoidCallback onToggleChrome;
+
+  @override
+  State<_VideoPage> createState() => _VideoPageState();
+}
+
+class _VideoPageState extends State<_VideoPage> {
+  VideoPlayerController? _controller;
+  bool _initializing = true;
+  bool _failed = false;
+  bool _showPlayIcon = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_hasInlineVideo) _initialize();
+  }
+
+  Future<void> _initialize() async {
+    final controller = VideoPlayerController.networkUrl(
+      Uri.parse(widget.item.url),
+    );
+    _controller = controller;
+    try {
+      await controller.initialize();
+      await controller.setLooping(true);
+      // If the page was swiped away mid-initialize, State.dispose() has
+      // already torn this controller down — disposing again here would be a
+      // double dispose.
+      if (!mounted) return;
+      setState(() => _initializing = false);
+      if (widget.isActive) await controller.play();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _initializing = false;
+        _failed = true;
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _VideoPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    if (widget.isActive && !oldWidget.isActive) {
+      controller.play();
+    } else if (!widget.isActive && oldWidget.isActive) {
+      controller
+        ..pause()
+        ..seekTo(Duration.zero);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  void _togglePlayback() {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    setState(() {
+      if (controller.value.isPlaying) {
+        controller.pause();
+        _showPlayIcon = true;
+      } else {
+        controller.play();
+        _showPlayIcon = false;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Desktop: no inline implementation, so keep the poster + hand off to
+    // the system player.
+    if (!_hasInlineVideo) {
+      return _ExternalVideoFallback(item: widget.item);
+    }
+    if (_initializing) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          if (widget.item.thumbnailUrl != null)
+            CachedNetworkImage(
+              imageUrl: widget.item.thumbnailUrl!,
+              fit: BoxFit.contain,
+            ),
+          const Center(
+            child: SizedBox(
+              width: 26,
+              height: 26,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation(Colors.white70),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    if (_failed || _controller == null) {
+      return _ExternalVideoFallback(item: widget.item);
+    }
+
+    final controller = _controller!;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        GestureDetector(
+          onTap: _togglePlayback,
+          onLongPress: widget.onToggleChrome,
+          child: Center(
+            child: AspectRatio(
+              aspectRatio: controller.value.aspectRatio > 0
+                  ? controller.value.aspectRatio
+                  : 16 / 9,
+              child: VideoPlayer(controller),
+            ),
+          ),
+        ),
+        // Big play badge only while paused, matching how Instagram surfaces
+        // the resume affordance without covering playback.
+        if (_showPlayIcon)
+          IgnorePointer(
+            child: Center(
+              child: Container(
+                width: 74,
+                height: 74,
+                decoration: const BoxDecoration(
+                  color: Color(0x88000000),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 42,
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 54),
+              child: _VideoScrubber(controller: controller),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Position readout plus a draggable progress bar, rebuilt straight from the
+/// controller so it stays in step with playback.
+class _VideoScrubber extends StatelessWidget {
+  const _VideoScrubber({required this.controller});
+
+  final VideoPlayerController controller;
+
+  static String _format(Duration d) {
+    final minutes = d.inMinutes.remainder(60).toString();
+    final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<VideoPlayerValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        final duration = value.duration;
+        final position = value.position;
+        return Row(
+          children: [
+            Text(
+              _format(position),
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 3,
+                  activeTrackColor: Colors.white,
+                  inactiveTrackColor: Colors.white24,
+                  thumbColor: Colors.white,
+                  overlayShape: SliderComponentShape.noOverlay,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 6,
+                  ),
+                ),
+                child: Slider(
+                  // Guard against a zero/unknown duration producing NaN.
+                  value: duration.inMilliseconds == 0
+                      ? 0
+                      : position.inMilliseconds
+                            .clamp(0, duration.inMilliseconds)
+                            .toDouble(),
+                  max: duration.inMilliseconds == 0
+                      ? 1
+                      : duration.inMilliseconds.toDouble(),
+                  onChanged: duration.inMilliseconds == 0
+                      ? null
+                      : (v) => controller.seekTo(
+                          Duration(milliseconds: v.round()),
+                        ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              _format(duration),
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                color: Color(0xFFD8D8D8),
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ExternalVideoFallback extends StatelessWidget {
+  const _ExternalVideoFallback({required this.item});
 
   final AlbumItem item;
 
@@ -640,186 +942,6 @@ class _VideoPage extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Preview-and-comment step shown once per picked file before it uploads.
-class _CaptionSheet extends StatefulWidget {
-  const _CaptionSheet({required this.file, this.position});
-
-  final XFile file;
-  final String? position;
-
-  @override
-  State<_CaptionSheet> createState() => _CaptionSheetState();
-}
-
-class _CaptionSheetState extends State<_CaptionSheet> {
-  final _controller = TextEditingController();
-
-  bool get _isVideo {
-    final ext = widget.file.name.toLowerCase();
-    return ext.endsWith('.mp4') ||
-        ext.endsWith('.mov') ||
-        ext.endsWith('.m4v') ||
-        ext.endsWith('.webm');
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() => Navigator.of(context).pop(_controller.text);
-
-  @override
-  Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottomInset),
-      child: Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-        ),
-        padding: const EdgeInsets.fromLTRB(22, 12, 22, 22),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE2E1EC),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Text(
-                  'Add a comment',
-                  style: const TextStyle(
-                    fontFamily: 'Poppins',
-                    color: _ink,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.3,
-                  ),
-                ),
-                if (widget.position != null) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    widget.position!,
-                    style: const TextStyle(
-                      fontFamily: 'Poppins',
-                      color: Color(0xFF9A9AA5),
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 14),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: SizedBox(
-                width: double.infinity,
-                height: 180,
-                child: _isVideo
-                    ? const ColoredBox(
-                        color: Color(0xFFF4F3FF),
-                        child: Icon(
-                          Icons.videocam_rounded,
-                          color: _purple,
-                          size: 34,
-                        ),
-                      )
-                    : Image.file(File(widget.file.path), fit: BoxFit.cover),
-              ),
-            ),
-            const SizedBox(height: 14),
-            Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFFF5F4FC),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: TextField(
-                controller: _controller,
-                autofocus: true,
-                maxLines: 3,
-                minLines: 1,
-                style: const TextStyle(
-                  fontFamily: 'Poppins',
-                  fontSize: 13,
-                  color: _ink,
-                ),
-                decoration: const InputDecoration(
-                  hintText: 'Write a comment (optional)',
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  filled: false,
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(vertical: 15),
-                  hintStyle: TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: 13,
-                    color: Color(0xFF9A9AA5),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                // The sheet is deliberately barrier-proof, so skipping needs
-                // to be an explicit action rather than a tap-outside.
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(''),
-                  child: const Text(
-                    'Skip',
-                    style: TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: 13,
-                      color: Color(0xFF9A9AA5),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: _submit,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _purple,
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    child: const Text(
-                      'Post',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

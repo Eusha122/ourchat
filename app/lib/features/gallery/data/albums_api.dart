@@ -68,13 +68,11 @@ class AlbumsApi {
     required String albumId,
     required String filePath,
     required String fileName,
-    String? caption,
+    void Function(double fraction)? onProgress,
   }) async {
     return _handle(() async {
       final form = FormData.fromMap({
         'file': await MultipartFile.fromFile(filePath, filename: fileName),
-        if (caption != null && caption.trim().isNotEmpty)
-          'caption': caption.trim(),
       });
       final response = await _dio.post(
         '/albums/$albumId/items',
@@ -82,6 +80,9 @@ class AlbumsApi {
         // Videos can be large and slow on mobile data; the default timeout
         // would abort a perfectly healthy upload.
         options: Options(sendTimeout: const Duration(minutes: 5)),
+        onSendProgress: (sent, total) {
+          if (total > 0) onProgress?.call(sent / total);
+        },
       );
       final data = response.data as Map<String, dynamic>;
       return AlbumItem.fromJson(data['item'] as Map<String, dynamic>);

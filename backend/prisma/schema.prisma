@@ -103,6 +103,11 @@ model ConversationParticipant {
   userId         String
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   lastReadAt     DateTime?
+  /// All four flags are per-participant, not per-conversation: pinning or
+  /// muting a chat only affects how it looks/behaves on your own side.
+  pinned         Boolean      @default(false)
+  mutedMessages  Boolean      @default(false)
+  mutedCalls     Boolean      @default(false)
 
   @@unique([conversationId, userId])
 }

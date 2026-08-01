@@ -26,13 +26,24 @@ export type StoredMedia = {
 
 /// Cloudinary derives thumbnails on the fly from the delivery URL, so the
 /// grid can fetch small crops instead of full-resolution originals.
-function thumbnailFor(url: string): string | null {
+///
+/// Videos need different treatment: they live under /video/upload/, so simply
+/// injecting an image transform yields another *video* URL, which an image
+/// widget cannot render. Swapping the extension for .jpg with `so_0` asks
+/// Cloudinary for a still poster frame instead.
+function thumbnailFor(url: string, isVideo: boolean): string | null {
   const marker = "/upload/";
   const at = url.indexOf(marker);
   if (at === -1) return null;
-  return `${url.slice(0, at + marker.length)}c_fill,w_500,h_500,q_auto,f_auto/${url.slice(
-    at + marker.length,
-  )}`;
+
+  const head = url.slice(0, at + marker.length);
+  const tail = url.slice(at + marker.length);
+
+  if (isVideo) {
+    const stillTail = tail.replace(/\.[^./]+$/, ".jpg");
+    return `${head}so_0,c_fill,w_500,h_500,q_auto/${stillTail}`;
+  }
+  return `${head}c_fill,w_500,h_500,q_auto,f_auto/${tail}`;
 }
 
 /// Stores album media. Prefers Cloudinary when it's configured; otherwise
@@ -77,11 +88,12 @@ export async function uploadAlbumMedia(params: {
     stream.end(params.buffer);
   });
 
+  const storedIsVideo = result.resource_type === "video" || isVideo;
   return {
     url: result.secure_url,
-    thumbnailUrl: thumbnailFor(result.secure_url),
+    thumbnailUrl: thumbnailFor(result.secure_url, storedIsVideo),
     width: result.width ?? null,
     height: result.height ?? null,
-    isVideo: result.resource_type === "video" || isVideo,
+    isVideo: storedIsVideo,
   };
 }

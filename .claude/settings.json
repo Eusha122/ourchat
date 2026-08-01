@@ -110,7 +110,17 @@
       "Bash(nohup \"F:\\\\flutter\\\\bin\\\\flutter.bat\" run -d windows --dart-define=API_BASE_URL=https://ourchat.safeshare.co)",
       "Bash(\"F:\\\\flutter\\\\bin\\\\flutter.bat\" pub *)",
       "Bash(grep -n \"EXCEPTION CAUGHT\\\\|The following\\\\|Failed assertion\\\\|Overflowed\" /tmp/win_prod.log | head -20)",
-      "Bash(grep -c \"EXCEPTION CAUGHT\" /tmp/win_prod2.log 2>/dev/null || echo \"0 exceptions\")"
+      "Bash(grep -c \"EXCEPTION CAUGHT\" /tmp/win_prod2.log 2>/dev/null || echo \"0 exceptions\")",
+      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'PGPASSWORD=$\\(grep DATABASE_URL /home/ubuntu/ourchat-backend/.env | sed -n '\\\\''s#.*://ourchat:\\\\\\([^@]*\\\\\\)@.*#\\\\1#p'\\\\''\\) psql -U ourchat -h localhost -d ourchat -q -c \" *)",
+      "Bash(curl -s -o /dev/null -w \"status=%{http_code} type=%{content_type} bytes=%{size_download}\\\\n\" \"https://res.cloudinary.com/rd9i25zf/video/upload/so_0,c_fill,w_500,h_500,q_auto/v1785611451/ourchat/albums/t6fyuojbzqxywdqrjber.jpg\")",
+      "Bash(curl -s -o /dev/null -w \"status=%{http_code} type=%{content_type}\\\\n\" -r 0-1024 \"https://res.cloudinary.com/rd9i25zf/video/upload/v1785611451/ourchat/albums/t6fyuojbzqxywdqrjber.mp4\")",
+      "Bash(rm -f /tmp/win_prod.log /tmp/win_prod2.log /tmp/windows_run.log /tmp/windows_run2.log /tmp/windows_run3.log /tmp/oc-vid.tar.gz /tmp/oc-caption.tar.gz /tmp/oc-albums.tar.gz)",
+      "Bash(sed -n '/model ConversationParticipant/,/^}/p' \"f:/ecripted chat/backend/prisma/schema.prisma\")",
+      "Bash(sed -n '/model Conversation /,/^}/p' \"f:/ecripted chat/backend/prisma/schema.prisma\")",
+      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'sudo -u postgres psql -q -c '\\\\''ALTER USER ourchat CREATEDB;'\\\\'' && cd /home/ubuntu/ourchat-backend && npx prisma migrate dev --create-only --name add_pin_mute_flags 2>&1 | tail -6')",
+      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'cat /home/ubuntu/ourchat-backend/prisma/migrations/20260801200113_add_pin_mute_flags/migration.sql')",
+      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'cd /home/ubuntu/ourchat-backend && npx prisma migrate deploy 2>&1 | tail -5 && sudo -u postgres psql -q -c '\\\\''ALTER USER ourchat NOCREATEDB;'\\\\''')",
+      "Bash(scp -q -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161:/home/ubuntu/ourchat-backend/prisma/migrations/20260801200113_add_pin_mute_flags/migration.sql 'f:/ecripted chat/backend/prisma/migrations/20260801200113_add_pin_mute_flags/migration.sql')"
     ],
     "additionalDirectories": [
       "C:\\Users\\user\\Downloads"
