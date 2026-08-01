@@ -586,3 +586,64 @@ conversationsRouter.post("/:conversationId/read", requireAuth, async (req, res) 
 
   res.json({ ok: true });
 });
+
+conversationsRouter.post("/:conversationId/pin", requireAuth, async (req, res) => {
+  const conversationId = req.params.conversationId as string;
+  const participant = await requireParticipant(conversationId, req.userId!);
+  if (!participant) {
+    res.status(403).json({ error: "Not a participant in this conversation" });
+    return;
+  }
+  const pinned = Boolean(req.body?.pinned);
+  await prisma.conversationParticipant.update({
+    where: { conversationId_userId: { conversationId, userId: req.userId! } },
+    data: { pinned },
+  });
+  res.json({ pinned });
+});
+
+conversationsRouter.post("/:conversationId/mute", requireAuth, async (req, res) => {
+  const conversationId = req.params.conversationId as string;
+  const participant = await requireParticipant(conversationId, req.userId!);
+  if (!participant) {
+    res.status(403).json({ error: "Not a participant in this conversation" });
+    return;
+  }
+  const data: { mutedMessages?: boolean; mutedCalls?: boolean } = {};
+  if (typeof req.body?.messages === "boolean") data.mutedMessages = req.body.messages;
+  if (typeof req.body?.calls === "boolean") data.mutedCalls = req.body.calls;
+  const updated = await prisma.conversationParticipant.update({
+    where: { conversationId_userId: { conversationId, userId: req.userId! } },
+    data,
+  });
+  res.json({ mutedMessages: updated.mutedMessages, mutedCalls: updated.mutedCalls });
+});
+
+conversationsRouter.delete("/:conversationId", requireAuth, async (req, res) => {
+  const conversationId = req.params.conversationId as string;
+  const participant = await requireParticipant(conversationId, req.userId!);
+  if (!participant) {
+    res.status(403).json({ error: "Not a participant in this conversation" });
+    return;
+  }
+
+  // Read the peer before the row (and its cascaded messages/participants)
+  // is gone, so they can still be told it happened.
+  const participants = await prisma.conversationParticipant.findMany({
+    where: { conversationId },
+    select: { userId: true },
+  });
+
+  // Message → MessageHide/MessageReaction and ConversationParticipant both
+  // cascade from Conversation, so this one delete removes the entire
+  // thread's history for both people. There is no "restore" — the frontend
+  // confirmation dialog is the only safety net, by design.
+  await prisma.conversation.delete({ where: { id: conversationId } });
+
+  const io = getIO();
+  for (const { userId } of participants) {
+    io.to(`user:${userId}`).emit("conversation:deleted", { conversationId });
+  }
+
+  res.json({ ok: true });
+});
