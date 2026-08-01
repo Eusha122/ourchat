@@ -97,3 +97,19 @@ export async function uploadAlbumMedia(params: {
     isVideo: storedIsVideo,
   };
 }
+
+/// Best-effort cleanup: deleting the row is what actually removes the item
+/// from the album, so a Cloudinary failure here is logged and swallowed
+/// rather than blocking the delete the user is waiting on.
+export async function deleteAlbumMedia(url: string, isVideo: boolean) {
+  if (!cloudinaryConfigured) return;
+  const match = /\/upload\/(?:v\d+\/)?(.+?)\.[^./]+$/.exec(url);
+  if (!match) return;
+  try {
+    await cloudinary.uploader.destroy(match[1]!, {
+      resource_type: isVideo ? "video" : "image",
+    });
+  } catch (error) {
+    console.error("Cloudinary delete failed", error);
+  }
+}

@@ -3,7 +3,7 @@ import multer from "multer";
 import { z } from "zod";
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../prisma";
-import { uploadAlbumMedia } from "../lib/mediaStorage";
+import { deleteAlbumMedia, uploadAlbumMedia } from "../lib/mediaStorage";
 import { postAuthorSelect } from "../lib/serializers";
 
 export const albumsRouter = Router();
@@ -227,6 +227,30 @@ async function handleUpload(req: Request, res: Response) {
     },
   });
 }
+
+albumsRouter.delete("/:albumId/items/:itemId", requireAuth, async (req, res) => {
+  const albumId = req.params.albumId as string;
+  const itemId = req.params.itemId as string;
+  if (!(await requireMembership(albumId, req.userId!))) {
+    res.status(403).json({ error: "Not a member of this album" });
+    return;
+  }
+
+  const item = await prisma.albumItem.findFirst({
+    where: { id: itemId, albumId },
+  });
+  if (!item) {
+    res.status(404).json({ error: "Item not found" });
+    return;
+  }
+
+  // No "recycle bin" — the row is gone the moment this returns, matching
+  // the confirmation dialog's promise that this can't be undone.
+  await prisma.albumItem.delete({ where: { id: itemId } });
+  await deleteAlbumMedia(item.url, item.type === "VIDEO");
+
+  res.json({ ok: true });
+});
 
 albumsRouter.post("/:albumId/items", requireAuth, (req, res) => {
   albumUpload.single("file")(req, res, (err) => {
