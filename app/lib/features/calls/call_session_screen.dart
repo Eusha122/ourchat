@@ -52,11 +52,15 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
 
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
+  MediaStream? _remoteStream;
   StreamSubscription<CallAnswer>? _answerSub;
   StreamSubscription<CallIceCandidate>? _iceSub;
   StreamSubscription<CallEndedEvent>? _endSub;
   StreamSubscription<String>? _readySub;
+  StreamSubscription<String>? _acceptedSub;
   StreamSubscription<CallNotificationAction>? _notificationActionSub;
+  ProviderSubscription<SocketService?>? _socketProviderSub;
+  SocketService? _signalSocket;
   Timer? _durationTimer;
   Timer? _connectionTimeout;
   Timer? _iceDisconnectTimer;
@@ -68,6 +72,8 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
   bool _cameraEnabled = true;
   bool _speakerOn = true;
   bool _connected = false;
+  bool _accepted = false;
+  bool _reconnecting = false;
   bool _terminal = false;
   bool _starting = false;
   int _seconds = 0;
@@ -89,13 +95,18 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
         _endCall(reason: 'declined');
       }
     });
+    _socketProviderSub = ref.listenManual(socketServiceProvider, (
+      previous,
+      next,
+    ) {
+      _bindSignalSocket(next);
+    }, fireImmediately: true);
     _boot();
   }
 
   Future<void> _boot() async {
     await _initializeRenderers();
     if (!mounted) return;
-    _listenForSignals();
     if (!widget.isIncoming) {
       await _startOutgoing();
     }
@@ -108,23 +119,36 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     ]);
   }
 
-  void _listenForSignals() {
-    final socket = _socket;
+  void _bindSignalSocket(SocketService? socket) {
+    if (identical(_signalSocket, socket)) return;
+    _signalSocket = socket;
+    _answerSub?.cancel();
+    _iceSub?.cancel();
+    _endSub?.cancel();
+    _readySub?.cancel();
+    _acceptedSub?.cancel();
     if (socket == null) return;
     _answerSub = socket.onCallAnswer.listen((answer) {
-      if (answer.callId == _callId) _handleAnswer(answer);
+      if (answer.callId == _callId) {
+        unawaited(_handleAnswer(answer).catchError(_handleSignalError));
+      }
     });
     _iceSub = socket.onCallIce.listen((candidate) {
-      if (candidate.callId == _callId) _handleIceCandidate(candidate);
+      if (candidate.callId == _callId) {
+        unawaited(
+          _handleIceCandidate(candidate).catchError(_handleSignalError),
+        );
+      }
     });
     _endSub = socket.onCallEnded.listen((event) {
       if (event.callId == _callId) _handleRemoteEnd(event.reason);
     });
     _readySub = socket.onCallReady.listen((callId) {
       if (callId != _callId) return;
-      _offerReady = true;
-      _flushOutgoingIce();
-      _startConnectionTimeout();
+      _markOfferReady();
+    });
+    _acceptedSub = socket.onCallAccepted.listen((callId) {
+      if (callId == _callId) _markAccepted();
     });
   }
 
@@ -150,14 +174,15 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
       if (offer.sdp == null || offer.type == null) {
         throw StateError('Connection unavailable');
       }
-      socket.sendCallOffer(
+      final relayed = await socket.sendCallOffer(
         callId: _callId!,
         conversationId: widget.conversationId,
         kind: widget.kind,
         type: offer.type!,
         sdp: offer.sdp!,
       );
-      _startOfferReadyTimeout();
+      if (!relayed) throw StateError('Signalling connection unavailable');
+      _markOfferReady();
     } catch (error) {
       if (mounted) setState(() => _error = _mediaError(error));
     } finally {
@@ -191,11 +216,13 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
       if (answer.sdp == null || answer.type == null) {
         throw StateError('Connection unavailable');
       }
-      socket.sendCallAnswer(
+      final relayed = await socket.sendCallAnswer(
         callId: _callId!,
         type: answer.type!,
         sdp: answer.sdp!,
       );
+      if (!relayed) throw StateError('Signalling connection unavailable');
+      _markAccepted();
       _startConnectionTimeout();
     } catch (error) {
       if (mounted) setState(() => _error = _mediaError(error));
@@ -234,11 +261,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     for (final track in stream.getTracks()) {
       await peerConnection.addTrack(track, stream);
     }
-    peerConnection.onTrack = (event) {
-      if (event.streams.isEmpty) return;
-      _remoteRenderer.srcObject = event.streams.first;
-      if (mounted) setState(() {});
-    };
+    peerConnection.onTrack = (event) => unawaited(_attachRemoteTrack(event));
     peerConnection.onIceCandidate = (candidate) {
       final callId = _callId;
       if (callId == null || candidate.candidate == null) return;
@@ -254,22 +277,34 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
       );
     };
     peerConnection.onConnectionState = (state) {
-      final value = state.toString().toLowerCase();
-      if (value.contains('connected')) {
-        _setConnected();
-      } else if (value.contains('failed') || value.contains('closed')) {
-        _endCall(reason: 'connection_failed');
+      switch (state) {
+        case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
+          _setConnected();
+        case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
+          _scheduleIceDisconnectCheck();
+        case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
+        case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
+          unawaited(_endCall(reason: 'connection_failed'));
+        case RTCPeerConnectionState.RTCPeerConnectionStateNew:
+        case RTCPeerConnectionState.RTCPeerConnectionStateConnecting:
+          break;
       }
     };
     peerConnection.onIceConnectionState = (state) {
-      final value = state.toString().toLowerCase();
-      if (value.contains('connected') || value.contains('completed')) {
-        _iceDisconnectTimer?.cancel();
-        _setConnected();
-      } else if (value.contains('disconnected')) {
-        _scheduleIceDisconnectCheck();
-      } else if (value.contains('failed') || value.contains('closed')) {
-        _endCall(reason: 'connection_failed');
+      switch (state) {
+        case RTCIceConnectionState.RTCIceConnectionStateConnected:
+        case RTCIceConnectionState.RTCIceConnectionStateCompleted:
+          _iceDisconnectTimer?.cancel();
+          _setConnected();
+        case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
+          _scheduleIceDisconnectCheck();
+        case RTCIceConnectionState.RTCIceConnectionStateFailed:
+        case RTCIceConnectionState.RTCIceConnectionStateClosed:
+          unawaited(_endCall(reason: 'connection_failed'));
+        case RTCIceConnectionState.RTCIceConnectionStateNew:
+        case RTCIceConnectionState.RTCIceConnectionStateChecking:
+        case RTCIceConnectionState.RTCIceConnectionStateCount:
+          break;
       }
     };
     try {
@@ -310,14 +345,58 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     }
   }
 
+  Future<void> _attachRemoteTrack(RTCTrackEvent event) async {
+    if (_terminal) return;
+    event.track.enabled = true;
+    MediaStream stream;
+    if (event.streams.isNotEmpty) {
+      stream = event.streams.first;
+    } else {
+      stream = _remoteStream ??= await createLocalMediaStream(
+        'remote-${_callId ?? 'call'}',
+      );
+      if (!stream.getTracks().any((track) => track.id == event.track.id)) {
+        await stream.addTrack(event.track);
+      }
+    }
+    _remoteStream = stream;
+    _remoteRenderer.srcObject = stream;
+    if (mounted) setState(() {});
+  }
+
   Future<void> _handleAnswer(CallAnswer answer) async {
     final peerConnection = _peerConnection;
     if (peerConnection == null || _remoteDescriptionSet || _terminal) return;
+    _markAccepted();
     await peerConnection.setRemoteDescription(
       RTCSessionDescription(answer.sdp, answer.type),
     );
     _remoteDescriptionSet = true;
     await _flushCandidates();
+  }
+
+  void _handleSignalError(Object error) {
+    if (!mounted || _terminal) return;
+    setState(() => _error = _mediaError(error));
+  }
+
+  void _markOfferReady() {
+    if (_offerReady || _terminal) return;
+    _offerReady = true;
+    _flushOutgoingIce();
+    _startConnectionTimeout();
+  }
+
+  void _markAccepted() {
+    if (_terminal) return;
+    CallRingtoneService.instance.stop();
+    _connectionTimeout?.cancel();
+    _startConnectionTimeout();
+    if (!mounted || _accepted) return;
+    setState(() {
+      _accepted = true;
+      _reconnecting = false;
+    });
   }
 
   Future<void> _handleIceCandidate(CallIceCandidate candidate) async {
@@ -374,7 +453,11 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
 
   void _setConnected() {
     if (!mounted || _connected) return;
-    setState(() => _connected = true);
+    setState(() {
+      _accepted = true;
+      _connected = true;
+      _reconnecting = false;
+    });
     _connectionTimeout?.cancel();
     _iceDisconnectTimer?.cancel();
     CallRingtoneService.instance.stop();
@@ -391,16 +474,9 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     });
   }
 
-  void _startOfferReadyTimeout() {
-    _connectionTimeout?.cancel();
-    _connectionTimeout = Timer(const Duration(seconds: 12), () {
-      if (_terminal || _offerReady) return;
-      _endCall(reason: 'connection_failed');
-    });
-  }
-
   void _scheduleIceDisconnectCheck() {
     if (_terminal || _iceDisconnectTimer?.isActive == true) return;
+    if (_connected && mounted) setState(() => _reconnecting = true);
     // Mobile radios routinely report a brief disconnected ICE state while
     // moving between Wi-Fi and LTE. Give ICE time to recover before ending.
     _iceDisconnectTimer = Timer(const Duration(seconds: 10), () {
@@ -487,6 +563,8 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     }
     await _peerConnection?.close();
     _peerConnection = null;
+    _remoteRenderer.srcObject = null;
+    _remoteStream = null;
   }
 
   @override
@@ -495,7 +573,9 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     _iceSub?.cancel();
     _endSub?.cancel();
     _readySub?.cancel();
+    _acceptedSub?.cancel();
     _notificationActionSub?.cancel();
+    _socketProviderSub?.close();
     _durationTimer?.cancel();
     _connectionTimeout?.cancel();
     _iceDisconnectTimer?.cancel();
@@ -514,10 +594,12 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
       : '@${widget.otherParticipant.username}';
 
   String get _timeLabel {
+    if (_reconnecting) return 'Reconnecting...';
+    if (!_connected && _accepted) return 'Connecting...';
     if (!_connected) {
       return widget.isIncoming
           ? 'Incoming ${widget.kind.label.toLowerCase()}'
-          : 'Calling…';
+          : 'Calling...';
     }
     final minutes = (_seconds ~/ 60).toString().padLeft(2, '0');
     final seconds = (_seconds % 60).toString().padLeft(2, '0');

@@ -1,9 +1,14 @@
+import 'dart:io' show Platform;
+
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform;
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
@@ -51,6 +56,9 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
   // they were tapped, not just an unordered "selected" flag.
   final List<String> _selectedIds = [];
   bool _deleting = false;
+  bool _savingSelection = false;
+  int _saveTotal = 0;
+  int _saveDone = 0;
 
   bool get _isSelecting => _selectedIds.isNotEmpty;
 
@@ -61,6 +69,89 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
   }
 
   void _clearSelection() => setState(() => _selectedIds.clear());
+
+  /// Saves one selected item at a time. Gallery APIs write into the device's
+  /// media library, and serialising those writes avoids memory spikes and
+  /// lets the progress text accurately reflect the item currently completed.
+  Future<void> _saveSelected() async {
+    if (_savingSelection || _deleting || _selectedIds.isEmpty) return;
+
+    final detail = _detail;
+    if (detail == null) return;
+
+    final itemById = {for (final item in detail.items) item.id: item};
+    final items = _selectedIds
+        .map((id) => itemById[id])
+        .whereType<AlbumItem>()
+        .toList(growable: false);
+    if (items.isEmpty) return;
+
+    setState(() {
+      _savingSelection = true;
+      _saveTotal = items.length;
+      _saveDone = 0;
+    });
+
+    final failedIds = <String>[];
+    var saved = 0;
+
+    for (final item in items) {
+      var didSave = false;
+      try {
+        final file = await DefaultCacheManager().getSingleFile(item.url);
+        if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+          if (item.type == AlbumItemType.video) {
+            await Gal.putVideo(file.path, album: 'OurChat');
+          } else {
+            await Gal.putImage(file.path, album: 'OurChat');
+          }
+          didSave = true;
+        } else {
+          // Desktop platforms correctly use their native save dialog. A
+          // cancel is left selected so the user can retry without reselecting.
+          final location = await getSaveLocation(
+            suggestedName: file.uri.pathSegments.last.isEmpty
+                ? 'ourchat-${item.id}'
+                : file.uri.pathSegments.last,
+          );
+          if (location != null) {
+            await file.copy(location.path);
+            didSave = true;
+          }
+        }
+      } catch (_) {
+        // Keep only the unsuccessful items selected, making retry safe and
+        // avoiding any accidental duplicate downloads after a partial save.
+      }
+
+      if (didSave) {
+        saved++;
+      } else {
+        failedIds.add(item.id);
+      }
+
+      if (mounted) {
+        setState(() => _saveDone++);
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _savingSelection = false;
+      _saveTotal = 0;
+      _saveDone = 0;
+      _selectedIds
+        ..clear()
+        ..addAll(failedIds);
+    });
+
+    final message = failedIds.isEmpty
+        ? 'Saved $saved ${saved == 1 ? 'item' : 'items'} to your device'
+        : 'Saved $saved of ${items.length}. ${failedIds.length} failed - tap Save to retry.';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
 
   @override
   void initState() {
@@ -258,17 +349,21 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                 children: [
                   IconButton(
                     icon: Icon(
-                      _isSelecting ? Icons.close_rounded : Icons.arrow_back_rounded,
+                      _isSelecting
+                          ? Icons.close_rounded
+                          : Icons.arrow_back_rounded,
                       color: _ink,
                     ),
                     onPressed: _isSelecting
-                        ? _clearSelection
+                        ? (_savingSelection ? null : _clearSelection)
                         : () => Navigator.of(context).pop(),
                   ),
                   Expanded(
                     child: _isSelecting
                         ? Text(
-                            '${_selectedIds.length} selected',
+                            _savingSelection
+                                ? 'Saving $_saveDone/$_saveTotal'
+                                : '${_selectedIds.length} selected',
                             style: const TextStyle(
                               fontFamily: 'Poppins',
                               color: _ink,
@@ -308,6 +403,24 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                   ),
                   if (_isSelecting)
                     IconButton(
+                      tooltip: 'Save selected',
+                      icon: _savingSelection
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: _purple,
+                              ),
+                            )
+                          : const Icon(Icons.download_rounded, color: _purple),
+                      onPressed: _savingSelection || _deleting
+                          ? null
+                          : _saveSelected,
+                    ),
+                  if (_isSelecting)
+                    IconButton(
+                      tooltip: 'Delete selected',
                       icon: _deleting
                           ? const SizedBox(
                               width: 20,
@@ -321,7 +434,9 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                               Icons.delete_outline_rounded,
                               color: Color(0xFFE24C4C),
                             ),
-                      onPressed: _deleting ? null : _confirmDeleteSelected,
+                      onPressed: _deleting || _savingSelection
+                          ? null
+                          : _confirmDeleteSelected,
                     ),
                 ],
               ),
@@ -469,6 +584,7 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
 
           return GestureDetector(
             onTap: () {
+              if (_savingSelection) return;
               if (_isSelecting) {
                 _toggleSelect(item.id);
               } else {
@@ -476,6 +592,7 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
               }
             },
             onLongPress: () {
+              if (_savingSelection) return;
               HapticFeedback.mediumImpact();
               _toggleSelect(item.id);
             },
@@ -566,7 +683,11 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
 /// while a batch is in flight, so bulk uploads show real progress instead of
 /// an opaque spinner.
 class _UploadButton extends StatelessWidget {
-  const _UploadButton({required this.done, required this.total, required this.onTap});
+  const _UploadButton({
+    required this.done,
+    required this.total,
+    required this.onTap,
+  });
 
   /// [total] is 0 when idle; while uploading, [done] counts completed files
   /// out of [total] (e.g. "2/10"), not bytes — several files upload at once,

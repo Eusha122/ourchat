@@ -38,6 +38,7 @@ class SocketService {
   final _callIceController = StreamController<CallIceCandidate>.broadcast();
   final _callEndedController = StreamController<CallEndedEvent>.broadcast();
   final _callReadyController = StreamController<String>.broadcast();
+  final _callAcceptedController = StreamController<String>.broadcast();
   final _pendingIce = <String, List<CallIceCandidate>>{};
 
   // Kept in sync by whoever last fetched/edited the conversation list (see
@@ -79,6 +80,7 @@ class SocketService {
   Stream<CallIceCandidate> get onCallIce => _callIceController.stream;
   Stream<CallEndedEvent> get onCallEnded => _callEndedController.stream;
   Stream<String> get onCallReady => _callReadyController.stream;
+  Stream<String> get onCallAccepted => _callAcceptedController.stream;
 
   void connect() {
     _socket = io.io(
@@ -176,6 +178,11 @@ class SocketService {
       final callId = map['callId'];
       if (callId is String) _callReadyController.add(callId);
     });
+    _socket!.on('call:accepted', (data) {
+      final map = Map<String, dynamic>.from(data as Map);
+      final callId = map['callId'];
+      if (callId is String) _callAcceptedController.add(callId);
+    });
   }
 
   /// Reconnect immediately when the app returns to foreground. The client
@@ -270,27 +277,51 @@ class SocketService {
     });
   }
 
-  void sendCallOffer({
+  Future<bool> sendCallOffer({
     required String callId,
     required String conversationId,
     required CallKind kind,
     required String type,
     required String sdp,
-  }) => _socket?.emit('call:offer', {
-    'callId': callId,
-    'conversationId': conversationId,
-    'kind': kind.wireValue,
-    'offer': {'type': type, 'sdp': sdp},
-  });
+  }) async {
+    final socket = _socket;
+    if (socket?.connected != true) return false;
+    try {
+      final response = await socket!.timeout(8000).emitWithAckAsync(
+        'call:offer',
+        {
+          'callId': callId,
+          'conversationId': conversationId,
+          'kind': kind.wireValue,
+          'offer': {'type': type, 'sdp': sdp},
+        },
+      );
+      return response is Map && response['ok'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
 
-  void sendCallAnswer({
+  Future<bool> sendCallAnswer({
     required String callId,
     required String type,
     required String sdp,
-  }) => _socket?.emit('call:answer', {
-    'callId': callId,
-    'answer': {'type': type, 'sdp': sdp},
-  });
+  }) async {
+    final socket = _socket;
+    if (socket?.connected != true) return false;
+    try {
+      final response = await socket!.timeout(8000).emitWithAckAsync(
+        'call:answer',
+        {
+          'callId': callId,
+          'answer': {'type': type, 'sdp': sdp},
+        },
+      );
+      return response is Map && response['ok'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   void sendCallIce({
     required String callId,
@@ -331,5 +362,6 @@ class SocketService {
     _callIceController.close();
     _callEndedController.close();
     _callReadyController.close();
+    _callAcceptedController.close();
   }
 }

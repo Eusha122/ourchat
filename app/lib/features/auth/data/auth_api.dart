@@ -12,7 +12,18 @@ class AuthApiException implements Exception {
 }
 
 class AuthApi {
-  AuthApi() : _dio = Dio(BaseOptions(baseUrl: apiBaseUrl));
+  AuthApi()
+    : _dio = Dio(
+        BaseOptions(
+          baseUrl: apiBaseUrl,
+          // Authentication gates the splash route. Without explicit bounds,
+          // an unreachable host can leave a restored session on the spinner
+          // indefinitely instead of falling back to the sign-in screen.
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
+          sendTimeout: const Duration(seconds: 10),
+        ),
+      );
 
   final Dio _dio;
 
@@ -93,7 +104,10 @@ class AuthApi {
 }
 
 class AuthTokensRefresh {
-  const AuthTokensRefresh({required this.accessToken, required this.refreshToken});
+  const AuthTokensRefresh({
+    required this.accessToken,
+    required this.refreshToken,
+  });
   final String accessToken;
   final String refreshToken;
 }

@@ -21,6 +21,17 @@ type ActiveCall = {
   kind: CallKind;
   startedAt: Date;
   acceptedAt?: Date;
+  answer?: { type: string; sdp: string };
+  callerCandidates: Array<{
+    candidate: string;
+    sdpMid: string | null;
+    sdpMLineIndex: number | null;
+  }>;
+  calleeCandidates: Array<{
+    candidate: string;
+    sdpMid: string | null;
+    sdpMLineIndex: number | null;
+  }>;
   // Kept only so a callee who wasn't connected when the call started (app
   // closed) can be resent the same offer once their socket reconnects —
   // see the `connection` handler below. Never persisted to the database.
@@ -225,14 +236,31 @@ export function initSocket(httpServer: HttpServer): Server {
     // only had the push alert, no live socket to receive the real offer on)
     // and is only just reconnecting, e.g. by tapping that notification.
     for (const [callId, call] of activeCalls) {
-      if (call.calleeId !== userId || call.acceptedAt != null) continue;
-      socket.emit("call:offer", {
-        callId,
-        conversationId: call.conversationId,
-        kind: call.kind,
-        offer: call.offer,
-        caller: call.caller,
-      });
+      if (call.calleeId === userId && call.acceptedAt == null) {
+        socket.emit("call:offer", {
+          callId,
+          conversationId: call.conversationId,
+          kind: call.kind,
+          offer: call.offer,
+          caller: call.caller,
+        });
+      }
+      if (call.callerId === userId && call.answer != null) {
+        socket.emit("call:accepted", {
+          callId,
+          acceptedAt: call.acceptedAt?.toISOString(),
+        });
+        socket.emit("call:answer", { callId, answer: call.answer });
+      }
+
+      const queuedCandidates = call.callerId === userId
+        ? call.calleeCandidates
+        : call.calleeId === userId
+          ? call.callerCandidates
+          : [];
+      for (const candidate of queuedCandidates) {
+        socket.emit("call:ice", { callId, candidate });
+      }
     }
 
     socket.on("disconnect", () => {
@@ -270,7 +298,10 @@ export function initSocket(httpServer: HttpServer): Server {
       },
     );
 
-    socket.on("call:offer", (payload: unknown) => {
+    socket.on("call:offer", (
+      payload: unknown,
+      acknowledge?: (result: { ok: boolean; error?: string }) => void,
+    ) => {
       void (async () => {
         const data = payload as {
           callId?: unknown;
@@ -284,6 +315,7 @@ export function initSocket(httpServer: HttpServer): Server {
           !isCallKind(data.kind) ||
           !isSignal(data.offer)
         ) {
+          acknowledge?.({ ok: false, error: "invalid_offer" });
           return;
         }
         const callId = data.callId;
@@ -304,7 +336,10 @@ export function initSocket(httpServer: HttpServer): Server {
         const callee = participants.find((participant) => participant.userId !== userId);
         // Our current product is one-to-one chat. Never let an arbitrary
         // socket signal a user it does not share a conversation with.
-        if (!caller || !callee || participants.length !== 2) return;
+        if (!caller || !callee || participants.length !== 2) {
+          acknowledge?.({ ok: false, error: "not_a_participant" });
+          return;
+        }
 
         const callMessage = await prisma.message.create({
           data: {
@@ -326,6 +361,8 @@ export function initSocket(httpServer: HttpServer): Server {
           startedAt: new Date(),
           offer: data.offer,
           caller: caller.user,
+          callerCandidates: [],
+          calleeCandidates: [],
         });
         setTimeout(() => {
           const active = activeCalls.get(callId);
@@ -340,6 +377,7 @@ export function initSocket(httpServer: HttpServer): Server {
         // The caller buffers its first ICE candidates until this point, which
         // avoids dropping them while this async database lookup is in flight.
         socket.emit("call:ready", { callId });
+        acknowledge?.({ ok: true });
         io?.to(`user:${callee.userId}`).emit("call:offer", {
           callId,
           conversationId: data.conversationId,
@@ -360,19 +398,40 @@ export function initSocket(httpServer: HttpServer): Server {
             isVideo: data.kind === "video",
           }).catch((error) => console.error("call push send failed", error));
         }
-      })().catch((error) => console.error("call offer relay failed", error));
+      })().catch((error) => {
+        acknowledge?.({ ok: false, error: "server_error" });
+        console.error("call offer relay failed", error);
+      });
     });
 
-    socket.on("call:answer", (payload: unknown) => {
+    socket.on("call:answer", (
+      payload: unknown,
+      acknowledge?: (result: { ok: boolean; error?: string }) => void,
+    ) => {
       const data = payload as { callId?: unknown; answer?: unknown };
-      if (typeof data.callId !== "string" || !isSignal(data.answer)) return;
+      if (typeof data.callId !== "string" || !isSignal(data.answer)) {
+        acknowledge?.({ ok: false, error: "invalid_answer" });
+        return;
+      }
       const call = activeCalls.get(data.callId);
-      if (!call || call.calleeId !== userId) return;
-      call.acceptedAt = new Date();
+      if (!call || call.calleeId !== userId) {
+        acknowledge?.({ ok: false, error: "call_not_found" });
+        return;
+      }
+      call.acceptedAt ??= new Date();
+      call.answer = data.answer;
       io?.to(`user:${call.callerId}`).emit("call:answer", {
         callId: data.callId,
         answer: data.answer,
       });
+      io
+        ?.to(`user:${call.callerId}`)
+        .to(`user:${call.calleeId}`)
+        .emit("call:accepted", {
+          callId: data.callId,
+          acceptedAt: call.acceptedAt.toISOString(),
+        });
+      acknowledge?.({ ok: true });
     });
 
     socket.on("call:ice", (payload: unknown) => {
@@ -381,6 +440,11 @@ export function initSocket(httpServer: HttpServer): Server {
       const call = activeCalls.get(data.callId);
       if (!call || (call.callerId !== userId && call.calleeId !== userId)) return;
       const peerId = call.callerId === userId ? call.calleeId : call.callerId;
+      const candidates = call.callerId === userId
+        ? call.callerCandidates
+        : call.calleeCandidates;
+      candidates.push(data.candidate);
+      if (candidates.length > 64) candidates.shift();
       io?.to(`user:${peerId}`).emit("call:ice", {
         callId: data.callId,
         candidate: data.candidate,

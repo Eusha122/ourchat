@@ -19,6 +19,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../calls/call_models.dart';
 import '../../calls/call_session_screen.dart';
+import '../../../core/socket_service.dart';
 import '../../posts/data/post_models.dart';
 import '../data/chat_models.dart';
 import '../data/conversations_api.dart';
@@ -68,13 +69,17 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   StreamSubscription<PresenceEvent>? _presenceSub;
   StreamSubscription<ConversationReadEvent>? _readSub;
   StreamSubscription<String>? _deletedSub;
+  ProviderSubscription<SocketService?>? _socketProviderSub;
+  SocketService? _boundSocket;
   Timer? _typingResetTimer;
+  Timer? _outgoingTypingTimer;
   Timer? _recordingTimer;
   DateTime? _otherLastReadAt;
   bool _isLoading = true;
   bool _isSending = false;
   bool _otherIsTyping = false;
   bool _otherIsOnline = false;
+  bool _typingSent = false;
   DateTime? _otherLastActiveAt;
   ChatMessage? _replyingTo;
   String? _voiceRecordingPath;
@@ -86,44 +91,14 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   void initState() {
     super.initState();
     _load();
-    ref.read(socketServiceProvider)?.joinConversation(widget.conversationId);
-    _messageSub = ref
-        .read(socketServiceProvider)
-        ?.onMessage
-        .where((m) => m.conversationId == widget.conversationId)
-        .listen(_onIncomingMessage);
-    _messageUpdateSub = ref
-        .read(socketServiceProvider)
-        ?.onMessageUpdated
-        .where((m) => m.conversationId == widget.conversationId)
-        .listen(_replaceMessage);
-    _messageRemovedSub = ref
-        .read(socketServiceProvider)
-        ?.onMessageRemoved
-        .where((event) => event.conversationId == widget.conversationId)
-        .listen((event) => _removeMessage(event.messageId));
-    _typingSub = ref
-        .read(socketServiceProvider)
-        ?.onTyping
-        .where((t) => t.userId == widget.otherParticipant.id)
-        .listen(_onTyping);
-    final socket = ref.read(socketServiceProvider);
-    _presenceSub = socket?.onPresence
-        .where((event) => event.userId == widget.otherParticipant.id)
-        .listen(_onPresence);
-    socket?.queryPresence(widget.otherParticipant.id);
-    _readSub = socket?.onConversationRead
-        .where(
-          (event) =>
-              event.conversationId == widget.conversationId &&
-              event.userId == widget.otherParticipant.id,
-        )
-        .listen(_onConversationRead);
+    _socketProviderSub = ref.listenManual(socketServiceProvider, (
+      previous,
+      next,
+    ) {
+      _bindSocket(next);
+    }, fireImmediately: true);
     // Covers deletion by either side while this screen is open — there's
     // nothing left to show, so leave rather than let further taps 404.
-    _deletedSub = socket?.onConversationDeleted
-        .where((id) => id == widget.conversationId)
-        .listen((_) => _onConversationDeleted());
     _markRead();
     // Marks this conversation as "open" so the global listener doesn't pop
     // a banner/sound for messages we're already looking at.
@@ -136,7 +111,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   @override
   void dispose() {
-    ref.read(socketServiceProvider)?.leaveConversation(widget.conversationId);
+    _boundSocket?.leaveConversation(widget.conversationId);
     if (ref.read(activeConversationIdProvider) == widget.conversationId) {
       ref.read(activeConversationIdProvider.notifier).set(null);
     }
@@ -147,7 +122,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     _presenceSub?.cancel();
     _readSub?.cancel();
     _deletedSub?.cancel();
+    _socketProviderSub?.close();
     _typingResetTimer?.cancel();
+    _outgoingTypingTimer?.cancel();
     _recordingTimer?.cancel();
     unawaited(_voiceRecorder.cancel());
     _voiceRecorder.dispose();
@@ -156,8 +133,56 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     super.dispose();
   }
 
+  void _bindSocket(SocketService? socket) {
+    if (identical(_boundSocket, socket)) return;
+    _boundSocket?.leaveConversation(widget.conversationId);
+    _boundSocket = socket;
+
+    for (final subscription in <StreamSubscription<dynamic>?>[
+      _messageSub,
+      _messageUpdateSub,
+      _messageRemovedSub,
+      _typingSub,
+      _presenceSub,
+      _readSub,
+      _deletedSub,
+    ]) {
+      if (subscription != null) unawaited(subscription.cancel());
+    }
+
+    if (socket == null) return;
+    socket.joinConversation(widget.conversationId);
+    _messageSub = socket.onMessage
+        .where((message) => message.conversationId == widget.conversationId)
+        .listen(_onIncomingMessage);
+    _messageUpdateSub = socket.onMessageUpdated
+        .where((message) => message.conversationId == widget.conversationId)
+        .listen(_replaceMessage);
+    _messageRemovedSub = socket.onMessageRemoved
+        .where((event) => event.conversationId == widget.conversationId)
+        .listen((event) => _removeMessage(event.messageId));
+    _typingSub = socket.onTyping
+        .where((event) => event.userId == widget.otherParticipant.id)
+        .listen(_onTyping);
+    _presenceSub = socket.onPresence
+        .where((event) => event.userId == widget.otherParticipant.id)
+        .listen(_onPresence);
+    _readSub = socket.onConversationRead
+        .where(
+          (event) =>
+              event.conversationId == widget.conversationId &&
+              event.userId == widget.otherParticipant.id,
+        )
+        .listen(_onConversationRead);
+    _deletedSub = socket.onConversationDeleted
+        .where((id) => id == widget.conversationId)
+        .listen((_) => _onConversationDeleted());
+    socket.queryPresence(widget.otherParticipant.id);
+  }
+
   void _onIncomingMessage(ChatMessage message) {
     if (!mounted) return;
+    if (_messages.any((existing) => existing.id == message.id)) return;
     final myId = ref.read(authControllerProvider).value?.user?.id;
     if (message.sender.id == myId && message.type != MessageType.call) {
       return; // avoid duplicating our own send
@@ -230,7 +255,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   void _onTyping(TypingEvent event) {
     if (!mounted) return;
-    setState(() => _otherIsTyping = event.isTyping);
+    if (_otherIsTyping == event.isTyping && event.isTyping) {
+      _typingResetTimer?.cancel();
+    } else {
+      setState(() => _otherIsTyping = event.isTyping);
+    }
     _typingResetTimer?.cancel();
     if (event.isTyping) {
       _typingResetTimer = Timer(
@@ -238,6 +267,28 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         () => mounted ? setState(() => _otherIsTyping = false) : null,
       );
     }
+  }
+
+  void _onComposerChanged(String value) {
+    final socket = _boundSocket;
+    final hasText = value.trim().isNotEmpty;
+    if (hasText && !_typingSent) {
+      _typingSent = true;
+      socket?.sendTyping(widget.conversationId, true);
+    }
+    _outgoingTypingTimer?.cancel();
+    if (!hasText) {
+      if (_typingSent) {
+        _typingSent = false;
+        socket?.sendTyping(widget.conversationId, false);
+      }
+      return;
+    }
+    _outgoingTypingTimer = Timer(const Duration(milliseconds: 1200), () {
+      if (!_typingSent) return;
+      _typingSent = false;
+      _boundSocket?.sendTyping(widget.conversationId, false);
+    });
   }
 
   void _onConversationRead(ConversationReadEvent event) {
@@ -270,9 +321,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   void _onPresence(PresenceEvent event) {
     if (!mounted) return;
+    final lastActiveAt = event.lastActiveAt ?? _otherLastActiveAt;
+    if (_otherIsOnline == event.online && _otherLastActiveAt == lastActiveAt) {
+      return;
+    }
     setState(() {
       _otherIsOnline = event.online;
-      _otherLastActiveAt = event.lastActiveAt ?? _otherLastActiveAt;
+      _otherLastActiveAt = lastActiveAt;
     });
   }
 
@@ -320,7 +375,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     final replyToId = _replyingTo?.id;
     setState(() => _isSending = true);
     _textController.clear();
-    ref.read(socketServiceProvider)?.sendTyping(widget.conversationId, false);
+    _onComposerChanged('');
     try {
       final message = await ref
           .read(conversationsApiProvider)
@@ -526,7 +581,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       resizeToAvoidBottomInset: true,
       body: Stack(
         children: [
-          const Positioned.fill(child: _PremiumCanvas()),
+          const Positioned.fill(
+            child: RepaintBoundary(child: _PremiumCanvas()),
+          ),
           Column(
             children: [
               _ConversationHeader(
@@ -543,9 +600,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 controller: _textController,
                 isSending: _isSending,
                 onSend: _send,
-                onTypingChanged: (value) => ref
-                    .read(socketServiceProvider)
-                    ?.sendTyping(widget.conversationId, value.isNotEmpty),
+                onTypingChanged: _onComposerChanged,
                 onCamera: () => _pickAndSendImage(ImageSource.camera),
                 onPhotos: () => _pickAndSendImage(ImageSource.gallery),
                 onFiles: _pickAndSendFile,
@@ -650,9 +705,23 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(22, 26, 22, 14),
       itemCount: _messages.length + (showTyping ? 1 : 0),
+      findChildIndexCallback: (key) {
+        if (key == const ValueKey<String>('typing-indicator')) {
+          return showTyping ? 0 : null;
+        }
+        if (key is! ValueKey<String> || !key.value.startsWith('reply-swipe-')) {
+          return null;
+        }
+        final messageId = key.value.substring('reply-swipe-'.length);
+        final index = _messages.indexWhere((item) => item.id == messageId);
+        return index == -1 ? null : index + (showTyping ? 1 : 0);
+      },
       itemBuilder: (context, rawIndex) {
         if (showTyping && rawIndex == 0) {
-          return _TypingIndicator(avatarUrl: widget.otherParticipant.avatarUrl);
+          return _TypingIndicator(
+            key: const ValueKey<String>('typing-indicator'),
+            avatarUrl: widget.otherParticipant.avatarUrl,
+          );
         }
         final index = showTyping ? rawIndex - 1 : rawIndex;
         final message = _messages[index];
@@ -740,7 +809,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           },
           background: _ReplySwipeBackground(mine: isMine),
           secondaryBackground: _ReplySwipeBackground(mine: isMine),
-          child: _Appear(
+          child: RepaintBoundary(
             child: _MessageActionTarget(
               onLongPress: () => _showMessageActions(message, isMine),
               child: body,
@@ -1453,31 +1522,6 @@ class _SheetAction extends StatelessWidget {
   );
 }
 
-class _Appear extends StatelessWidget {
-  const _Appear({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: 1),
-      duration: _motion,
-      curve: _ease,
-      builder: (context, t, child) {
-        return Opacity(
-          opacity: t,
-          child: Transform.translate(
-            offset: Offset(0, (1 - t) * 10),
-            child: Transform.scale(scale: 0.965 + 0.035 * t, child: child),
-          ),
-        );
-      },
-      child: child,
-    );
-  }
-}
-
 /// Sized to sit level with a single-line bubble so the avatar and the message
 /// read as one unit. Shared by the message rows and the typing indicator.
 const double _chatAvatarSize = 36;
@@ -1558,7 +1602,7 @@ class _SeenReceipt extends StatelessWidget {
 /// Avatar plus a glass bubble of three breathing dots, matching the incoming
 /// message treatment so it reads as a message being written in place.
 class _TypingIndicator extends StatefulWidget {
-  const _TypingIndicator({required this.avatarUrl});
+  const _TypingIndicator({super.key, required this.avatarUrl});
 
   final String? avatarUrl;
 
