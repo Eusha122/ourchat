@@ -146,10 +146,15 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
             label: 'Open',
             textColor: const Color(0xFF9E93FF),
             onPressed: () {
-              final rootContext = widget.scaffoldMessengerKey.currentContext;
-              if (rootContext != null) {
+              // Same structural issue as above: ScaffoldMessenger also wraps
+              // *around* MaterialApp.builder's output (confirmed directly in
+              // the framework source), so scaffoldMessengerKey.currentContext
+              // has no GoRouter ancestor either — this "Open" button would
+              // throw the identical exception when tapped.
+              final routerContext = rootNavigatorKey.currentContext;
+              if (routerContext != null) {
                 GoRouter.of(
-                  rootContext,
+                  routerContext,
                 ).push('/chats/${message.conversationId}', extra: sender);
               }
             },

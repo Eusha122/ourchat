@@ -127,7 +127,9 @@
       "Read(//c/Users/user/AppData/Local/Pub/Cache/hosted/pub.dev/image_picker-1.2.3/lib/**)",
       "Bash(\"F:\\\\flutter\\\\bin\\\\flutter.bat\" test *)",
       "Bash(grep -n \"itemBuilder: \\(context, index\\) {\" \"f:/ecripted chat/app/lib/features/gallery/screens/album_detail_screen.dart\")",
-      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'echo '\\\\''=== ANY /read requests since testaccount was created \\(20:40\\) ==='\\\\''; sudo awk -v since='\\\\''02/Aug/2026:20:40'\\\\'' '\\\\''$0 ~ /conversations.*\\\\/read/'\\\\'' /var/log/nginx/access.log | tail -20 *)"
+      "Bash(ssh -i 'C:\\\\Users\\\\user\\\\Downloads\\\\LightsailDefaultKey-ap-south-1.pem' ubuntu@13.232.202.161 'echo '\\\\''=== ANY /read requests since testaccount was created \\(20:40\\) ==='\\\\''; sudo awk -v since='\\\\''02/Aug/2026:20:40'\\\\'' '\\\\''$0 ~ /conversations.*\\\\/read/'\\\\'' /var/log/nginx/access.log | tail -20 *)",
+      "Bash(sed -n '1000,1060p' \"F:/flutter/packages/flutter/lib/src/material/app.dart\")",
+      "Read(//f/flutter/packages/flutter/lib/src/material/**)"
     ],
     "additionalDirectories": [
       "C:\\Users\\user\\Downloads"
