@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../features/auth/state/auth_controller.dart';
 import '../features/chat/data/chat_models.dart';
 import '../features/chat/state/chat_providers.dart';
+import '../router/app_router.dart';
 import 'app_foreground.dart';
 import 'notification_service.dart';
 
@@ -54,9 +55,16 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
 
     // The message is already on-screen and immediately marked read by
     // ConversationScreen. Suppress every alert surface for this exact thread.
-    final currentPath = GoRouter.of(
-      context,
-    ).routeInformationProvider.value.uri.path;
+    //
+    // This widget is mounted via MaterialApp.builder, which puts it above
+    // (outside) the Router in the tree rather than inside it — so its own
+    // `context` has no GoRouter ancestor and GoRouter.of(context) throws.
+    // rootNavigatorKey's context is the Navigator GoRouter actually manages,
+    // which does have one.
+    final routerContext = rootNavigatorKey.currentContext;
+    final currentPath = routerContext == null
+        ? null
+        : GoRouter.of(routerContext).routeInformationProvider.value.uri.path;
     if (currentPath == '/chats/${message.conversationId}' &&
         AppForeground.instance.isForeground) {
       return;

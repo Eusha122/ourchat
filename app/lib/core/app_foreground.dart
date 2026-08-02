@@ -26,7 +26,23 @@ class AppForeground {
   bool get isForeground => _resumed.value;
 
   void update(AppLifecycleState state) {
-    _resumed.value = state == AppLifecycleState.resumed;
+    // Gating on `== resumed` was the actual bug: desktop reports `inactive`
+    // for a window that's created and visible but not yet OS-confirmed as
+    // focused, and unlike mobile it often never follows with an explicit
+    // `resumed` transition afterward — so that single `inactive` event
+    // permanently latched this to "backgrounded" and silently blocked every
+    // read receipt for the rest of the session. `inactive` also covers
+    // transient overlays on mobile (an incoming call, control center) where
+    // the user plainly hasn't left the screen. Only the states that
+    // unambiguously mean "not visible" should count as backgrounded; treat
+    // everything else — including a lifecycle event we don't yet recognize —
+    // as foreground, so an unmapped future state fails open instead of
+    // silently freezing read receipts again.
+    final backgrounded =
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden;
+    _resumed.value = !backgrounded;
   }
 }
 
