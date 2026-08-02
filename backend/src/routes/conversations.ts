@@ -4,7 +4,11 @@ import { prisma } from "../prisma";
 import { chatAttachmentUpload } from "../lib/attachmentUpload";
 import { fetchLinkMetadata } from "../lib/linkMetadata";
 import { sendMessagePush } from "../lib/push";
-import { postAuthorSelect, toPublicMessage } from "../lib/serializers";
+import {
+  messageReplySelect,
+  postAuthorSelect,
+  toPublicMessage,
+} from "../lib/serializers";
 import { uploadFile } from "../lib/storage";
 import { iceServersForUser } from "../lib/turn";
 import { getIO } from "../socket";
@@ -25,6 +29,7 @@ async function requireParticipant(conversationId: string, userId: string) {
 const messageInclude = {
   sender: { select: postAuthorSelect },
   reactions: { select: { userId: true, emoji: true } },
+  replyTo: { select: messageReplySelect },
 } as const;
 
 function messagePreviewText(message: {
@@ -318,6 +323,19 @@ async function handleSendMessage(req: Request, res: Response) {
   let linkTitle: string | null = null;
   let linkImageUrl: string | null = null;
   let fileSize: number | null = null;
+  let replyToId: string | null = null;
+
+  if (parsed.data.replyToId) {
+    const replyTarget = await prisma.message.findFirst({
+      where: { id: parsed.data.replyToId, conversationId },
+      select: { id: true },
+    });
+    if (!replyTarget) {
+      res.status(400).json({ error: "The message you replied to is unavailable" });
+      return;
+    }
+    replyToId = replyTarget.id;
+  }
 
   if (parsed.data.type === "LINK") {
     const metadata = await fetchLinkMetadata(parsed.data.linkUrl!);
@@ -359,6 +377,7 @@ async function handleSendMessage(req: Request, res: Response) {
       linkTitle,
       linkImageUrl,
       fileSize,
+      replyToId,
     },
     include: messageInclude,
   });

@@ -31,6 +31,16 @@ export const postAuthorSelect = {
   avatarUrl: true,
 } as const satisfies Prisma.UserSelect;
 
+export const messageReplySelect = {
+  id: true,
+  type: true,
+  text: true,
+  linkTitle: true,
+  linkImageUrl: true,
+  unsentAt: true,
+  sender: { select: postAuthorSelect },
+} as const;
+
 type PostWithRelations = Prisma.PostGetPayload<{
   include: {
     author: { select: typeof postAuthorSelect };
@@ -69,6 +79,7 @@ type MessageWithSender = Prisma.MessageGetPayload<{
   include: {
     sender: { select: typeof postAuthorSelect };
     reactions: { select: { userId: true; emoji: true } };
+    replyTo: { select: typeof messageReplySelect };
   };
 }>;
 
@@ -86,6 +97,17 @@ export function toPublicMessage(message: MessageWithSender) {
     callStatus: message.callStatus,
     callDurationSeconds: message.callDurationSeconds,
     isUnsent: message.unsentAt !== null,
+    replyTo: message.replyTo
+      ? {
+          id: message.replyTo.id,
+          type: message.replyTo.type,
+          text: message.replyTo.text,
+          linkTitle: message.replyTo.linkTitle,
+          linkImageUrl: message.replyTo.linkImageUrl,
+          isUnsent: message.replyTo.unsentAt !== null,
+          sender: message.replyTo.sender,
+        }
+      : null,
     reactions: message.reactions,
     createdAt: message.createdAt,
     sender: message.sender,

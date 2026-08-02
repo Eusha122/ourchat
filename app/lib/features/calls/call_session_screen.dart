@@ -59,6 +59,8 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
   StreamSubscription<CallNotificationAction>? _notificationActionSub;
   Timer? _durationTimer;
   Timer? _connectionTimeout;
+  Timer? _iceDisconnectTimer;
+  Future<void> _iceOperation = Future<void>.value();
   String? _callId;
   bool _remoteDescriptionSet = false;
   bool _offerReady = false;
@@ -122,6 +124,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
       if (callId != _callId) return;
       _offerReady = true;
       _flushOutgoingIce();
+      _startConnectionTimeout();
     });
   }
 
@@ -133,6 +136,10 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     setState(() => _starting = true);
     CallRingtoneService.instance.playOutgoing();
     try {
+      final socket = _socket;
+      if (socket == null || !await socket.ensureConnected()) {
+        throw StateError('Signalling connection unavailable');
+      }
       await _prepareConnection();
       final peerConnection = _peerConnection!;
       final offer = await peerConnection.createOffer({
@@ -140,8 +147,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
         'offerToReceiveVideo': widget.kind == CallKind.video,
       });
       await peerConnection.setLocalDescription(offer);
-      final socket = _socket;
-      if (socket == null || offer.sdp == null || offer.type == null) {
+      if (offer.sdp == null || offer.type == null) {
         throw StateError('Connection unavailable');
       }
       socket.sendCallOffer(
@@ -151,7 +157,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
         type: offer.type!,
         sdp: offer.sdp!,
       );
-      _startConnectionTimeout();
+      _startOfferReadyTimeout();
     } catch (error) {
       if (mounted) setState(() => _error = _mediaError(error));
     } finally {
@@ -166,6 +172,10 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     await NotificationService().dismissIncomingCall(_callId!);
     setState(() => _starting = true);
     try {
+      final socket = _socket;
+      if (socket == null || !await socket.ensureConnected()) {
+        throw StateError('Signalling connection unavailable');
+      }
       await _prepareConnection();
       final peerConnection = _peerConnection!;
       await peerConnection.setRemoteDescription(
@@ -178,8 +188,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
         'offerToReceiveVideo': widget.kind == CallKind.video,
       });
       await peerConnection.setLocalDescription(answer);
-      final socket = _socket;
-      if (socket == null || answer.sdp == null || answer.type == null) {
+      if (answer.sdp == null || answer.type == null) {
         throw StateError('Connection unavailable');
       }
       socket.sendCallAnswer(
@@ -218,6 +227,8 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     final peerConnection = await createPeerConnection({
       'iceServers': iceServers,
       'sdpSemantics': 'unified-plan',
+      'bundlePolicy': 'max-bundle',
+      'rtcpMuxPolicy': 'require',
     });
     _peerConnection = peerConnection;
     for (final track in stream.getTracks()) {
@@ -243,10 +254,22 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
       );
     };
     peerConnection.onConnectionState = (state) {
-      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+      final value = state.toString().toLowerCase();
+      if (value.contains('connected')) {
         _setConnected();
-      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
-        _handleRemoteEnd('Connection lost');
+      } else if (value.contains('failed') || value.contains('closed')) {
+        _endCall(reason: 'connection_failed');
+      }
+    };
+    peerConnection.onIceConnectionState = (state) {
+      final value = state.toString().toLowerCase();
+      if (value.contains('connected') || value.contains('completed')) {
+        _iceDisconnectTimer?.cancel();
+        _setConnected();
+      } else if (value.contains('disconnected')) {
+        _scheduleIceDisconnectCheck();
+      } else if (value.contains('failed') || value.contains('closed')) {
+        _endCall(reason: 'connection_failed');
       }
     };
     try {
@@ -259,7 +282,9 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
 
   Future<List<Map<String, dynamic>>> _loadIceServers() async {
     try {
-      final servers = await ref.read(conversationsApiProvider).fetchCallIceServers();
+      final servers = await ref
+          .read(conversationsApiProvider)
+          .fetchCallIceServers();
       if (servers.isNotEmpty) return servers;
     } on ConversationsApiException {
       // An older backend should still allow a best-effort direct STUN call.
@@ -296,34 +321,49 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
   }
 
   Future<void> _handleIceCandidate(CallIceCandidate candidate) async {
-    final key = '${candidate.candidate}|${candidate.sdpMid}|${candidate.sdpMLineIndex}';
+    final key =
+        '${candidate.candidate}|${candidate.sdpMid}|${candidate.sdpMLineIndex}';
     if (!_seenIceCandidates.add(key)) return;
     if (_peerConnection == null || !_remoteDescriptionSet) {
       _queuedCandidates.add(candidate);
       return;
     }
-    await _peerConnection!.addCandidate(
-      RTCIceCandidate(
-        candidate.candidate,
-        candidate.sdpMid,
-        candidate.sdpMLineIndex,
-      ),
-    );
+    await _enqueueRemoteCandidate(candidate);
+  }
+
+  /// Native WebRTC expects remote candidates in order. Socket callbacks are
+  /// asynchronous, so serialising adds prevents a fast mobile connection from
+  /// racing addCandidate calls before its description is fully applied.
+  Future<void> _enqueueRemoteCandidate(CallIceCandidate candidate) {
+    _iceOperation = _iceOperation.then((_) async {
+      final peerConnection = _peerConnection;
+      if (_terminal || peerConnection == null || !_remoteDescriptionSet) {
+        return;
+      }
+      try {
+        await peerConnection.addCandidate(
+          RTCIceCandidate(
+            candidate.candidate,
+            candidate.sdpMid,
+            candidate.sdpMLineIndex,
+          ),
+        );
+      } catch (_) {
+        // A stale candidate can arrive after renegotiation or teardown. The
+        // next viable host/srflx/relay candidate remains usable, so ignore it.
+      }
+    });
+    return _iceOperation;
   }
 
   Future<void> _flushCandidates() async {
     final callId = _callId;
     if (callId == null) return;
-    final pending = _socket?.takePendingIce(callId) ?? const <CallIceCandidate>[];
+    final pending =
+        _socket?.takePendingIce(callId) ?? const <CallIceCandidate>[];
     while (_queuedCandidates.isNotEmpty) {
       final candidate = _queuedCandidates.removeAt(0);
-      await _peerConnection?.addCandidate(
-        RTCIceCandidate(
-          candidate.candidate,
-          candidate.sdpMid,
-          candidate.sdpMLineIndex,
-        ),
-      );
+      await _enqueueRemoteCandidate(candidate);
     }
     // SocketService retains candidates that arrived before this screen was
     // mounted. Candidates also delivered live are deduplicated above.
@@ -336,6 +376,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     if (!mounted || _connected) return;
     setState(() => _connected = true);
     _connectionTimeout?.cancel();
+    _iceDisconnectTimer?.cancel();
     CallRingtoneService.instance.stop();
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _seconds++);
@@ -347,6 +388,23 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     _connectionTimeout = Timer(const Duration(seconds: 35), () {
       if (_terminal || _connected) return;
       _endCall(reason: 'connection_failed');
+    });
+  }
+
+  void _startOfferReadyTimeout() {
+    _connectionTimeout?.cancel();
+    _connectionTimeout = Timer(const Duration(seconds: 12), () {
+      if (_terminal || _offerReady) return;
+      _endCall(reason: 'connection_failed');
+    });
+  }
+
+  void _scheduleIceDisconnectCheck() {
+    if (_terminal || _iceDisconnectTimer?.isActive == true) return;
+    // Mobile radios routinely report a brief disconnected ICE state while
+    // moving between Wi-Fi and LTE. Give ICE time to recover before ending.
+    _iceDisconnectTimer = Timer(const Duration(seconds: 10), () {
+      if (!_terminal) _endCall(reason: 'connection_failed');
     });
   }
 
@@ -384,6 +442,10 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     if (value.contains('permission') || value.contains('denied')) {
       return 'Allow camera and microphone access to start this call.';
     }
+    if (value.contains('signalling') ||
+        value.contains('connection unavailable')) {
+      return 'Reconnecting. Please try the call again.';
+    }
     return 'Could not start the call. Please check your camera and microphone.';
   }
 
@@ -416,6 +478,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
   Future<void> _disposeMedia() async {
     _durationTimer?.cancel();
     _connectionTimeout?.cancel();
+    _iceDisconnectTimer?.cancel();
     CallRingtoneService.instance.stop();
     final stream = _localStream;
     _localStream = null;
@@ -435,6 +498,7 @@ class _CallSessionScreenState extends ConsumerState<CallSessionScreen> {
     _notificationActionSub?.cancel();
     _durationTimer?.cancel();
     _connectionTimeout?.cancel();
+    _iceDisconnectTimer?.cancel();
     if (!_terminal) {
       final callId = _callId ?? widget.offer?.callId;
       if (callId != null) _socket?.endCall(callId, reason: 'ended');

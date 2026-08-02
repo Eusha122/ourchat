@@ -9,6 +9,7 @@ export const sendMessageSchema = z
     type: z.enum(["TEXT", "LINK", "IMAGE", "FILE"]).default("TEXT"),
     text: z.string().min(1).max(4000).optional(),
     linkUrl: z.string().url().optional(),
+    replyToId: z.string().uuid().optional(),
   })
   .refine(
     (data) => {

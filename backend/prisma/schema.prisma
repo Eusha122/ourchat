@@ -20,6 +20,9 @@ model User {
   displayName  String?
   bio          String?
   avatarUrl    String?
+  /// Persisted so "last active" survives backend restarts and can be shown
+  /// after the three-minute online grace window expires.
+  lastActiveAt DateTime @default(now())
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -153,12 +156,16 @@ model Message {
   callStatus          CallStatus?
   callDurationSeconds Int?
   unsentAt            DateTime?
+  replyToId           String?
+  replyTo             Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies             Message[]    @relation("MessageReplies")
   createdAt           DateTime     @default(now())
 
   hiddenBy  MessageHide[]
   reactions MessageReaction[]
 
   @@index([conversationId, createdAt])
+  @@index([replyToId])
 }
 
 /// A personal hide is account-wide: a message removed "for me" stays hidden

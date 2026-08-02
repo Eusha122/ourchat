@@ -125,6 +125,7 @@ class ChatMessage {
     required this.callDurationSeconds,
     required this.isUnsent,
     required this.reactions,
+    required this.replyTo,
     required this.createdAt,
     required this.sender,
   });
@@ -146,6 +147,11 @@ class ChatMessage {
       reactions: (json['reactions'] as List? ?? const [])
           .map((item) => MessageReaction.fromJson(item as Map<String, dynamic>))
           .toList(growable: false),
+      replyTo: json['replyTo'] is Map
+          ? MessageReply.fromJson(
+              Map<String, dynamic>.from(json['replyTo'] as Map),
+            )
+          : null,
       createdAt: DateTime.parse(json['createdAt'] as String),
       sender: PostAuthor.fromJson(json['sender'] as Map<String, dynamic>),
     );
@@ -164,6 +170,7 @@ class ChatMessage {
   final int? callDurationSeconds;
   final bool isUnsent;
   final List<MessageReaction> reactions;
+  final MessageReply? replyTo;
   final DateTime createdAt;
   final PostAuthor sender;
 
@@ -179,6 +186,7 @@ class ChatMessage {
     int? callDurationSeconds,
     bool? isUnsent,
     List<MessageReaction>? reactions,
+    MessageReply? replyTo,
   }) {
     return ChatMessage(
       id: id,
@@ -194,9 +202,49 @@ class ChatMessage {
       callDurationSeconds: callDurationSeconds ?? this.callDurationSeconds,
       isUnsent: isUnsent ?? this.isUnsent,
       reactions: reactions ?? this.reactions,
+      replyTo: replyTo ?? this.replyTo,
       createdAt: createdAt,
       sender: sender,
     );
+  }
+}
+
+class MessageReply {
+  const MessageReply({
+    required this.id,
+    required this.type,
+    required this.text,
+    required this.linkTitle,
+    required this.isUnsent,
+    required this.sender,
+  });
+
+  factory MessageReply.fromJson(Map<String, dynamic> json) => MessageReply(
+    id: json['id'] as String,
+    type: MessageType.fromJson(json['type'] as String),
+    text: json['text'] as String?,
+    linkTitle: json['linkTitle'] as String?,
+    isUnsent: json['isUnsent'] as bool? ?? false,
+    sender: PostAuthor.fromJson(json['sender'] as Map<String, dynamic>),
+  );
+
+  final String id;
+  final MessageType type;
+  final String? text;
+  final String? linkTitle;
+  final bool isUnsent;
+  final PostAuthor sender;
+
+  String get preview {
+    if (isUnsent) return 'This message was unsent';
+    if (text?.isNotEmpty == true) return text!;
+    return switch (type) {
+      MessageType.image => 'Photo',
+      MessageType.file => linkTitle ?? 'File',
+      MessageType.link => linkTitle ?? 'Link',
+      MessageType.call => 'Call',
+      MessageType.text => 'Message',
+    };
   }
 }
 
@@ -299,15 +347,23 @@ class ConversationReadEvent {
 }
 
 class PresenceEvent {
-  const PresenceEvent({required this.userId, required this.online});
+  const PresenceEvent({
+    required this.userId,
+    required this.online,
+    required this.lastActiveAt,
+  });
 
   factory PresenceEvent.fromJson(Map<String, dynamic> json) {
     return PresenceEvent(
       userId: json['userId'] as String,
       online: json['online'] as bool,
+      lastActiveAt: json['lastActiveAt'] is String
+          ? DateTime.tryParse(json['lastActiveAt'] as String)
+          : null,
     );
   }
 
   final String userId;
   final bool online;
+  final DateTime? lastActiveAt;
 }

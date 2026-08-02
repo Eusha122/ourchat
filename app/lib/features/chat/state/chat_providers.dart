@@ -19,7 +19,12 @@ final socketServiceProvider = Provider<SocketService?>((ref) {
   final userId = auth?.user?.id;
   if (accessToken == null || userId == null) return null;
 
-  final service = SocketService(accessToken: accessToken, currentUserId: userId);
+  final service = SocketService(
+    accessToken: accessToken,
+    currentUserId: userId,
+    refreshAccessToken: () =>
+        ref.read(authControllerProvider.notifier).refreshAccessToken(),
+  );
   service.connect();
   ref.onDispose(service.dispose);
   return service;

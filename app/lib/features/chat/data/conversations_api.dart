@@ -72,11 +72,19 @@ class ConversationsApi {
     });
   }
 
-  Future<ChatMessage> sendMessage(String conversationId, String text) async {
+  Future<ChatMessage> sendMessage(
+    String conversationId,
+    String text, {
+    String? replyToId,
+  }) async {
     return _handle(() async {
       final response = await _dio.post(
         '/conversations/$conversationId/messages',
-        data: {'type': 'TEXT', 'text': text},
+        data: {
+          'type': 'TEXT',
+          'text': text,
+          if (replyToId != null) 'replyToId': replyToId,
+        },
       );
       final data = response.data as Map<String, dynamic>;
       return ChatMessage.fromJson(data['message'] as Map<String, dynamic>);
@@ -118,10 +126,12 @@ class ConversationsApi {
     required String filePath,
     required String fileName,
     required bool isImage,
+    String? replyToId,
   }) async {
     return _handle(() async {
       final form = FormData.fromMap({
         'type': isImage ? 'IMAGE' : 'FILE',
+        if (replyToId != null) 'replyToId': replyToId,
         'file': await MultipartFile.fromFile(filePath, filename: fileName),
       });
       final response = await _dio.post(

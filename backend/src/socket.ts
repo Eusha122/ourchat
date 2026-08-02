@@ -2,7 +2,11 @@ import type { Server as HttpServer } from "http";
 import { Server } from "socket.io";
 import { verifyAccessToken } from "./lib/jwt";
 import { prisma } from "./prisma";
-import { postAuthorSelect, toPublicMessage } from "./lib/serializers";
+import {
+  messageReplySelect,
+  postAuthorSelect,
+  toPublicMessage,
+} from "./lib/serializers";
 import { sendCallPush } from "./lib/push";
 
 let io: Server | undefined;
@@ -36,10 +40,11 @@ const activeCalls = new Map<string, ActiveCall>();
 // Presence is in-memory only (not persisted) — counts active sockets per user
 // so a device with multiple tabs/reconnects doesn't flicker offline early.
 const onlineCounts = new Map<string, number>();
-// A brief grace period before announcing "offline" absorbs quick
-// reconnects (app backgrounding, network blips) without visible flicker.
+// Keep the person visibly online for three minutes after their last socket
+// disconnect. This absorbs app switching/network changes and matches the
+// familiar Instagram-style online grace period.
 const offlineTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const OFFLINE_GRACE_MS = 5_000;
+const OFFLINE_GRACE_MS = 3 * 60 * 1000;
 
 async function getConversationPartnerIds(userId: string): Promise<string[]> {
   const own = await prisma.conversationParticipant.findMany({
@@ -55,15 +60,24 @@ async function getConversationPartnerIds(userId: string): Promise<string[]> {
   return [...new Set(others.map((o) => o.userId))];
 }
 
-async function broadcastPresence(userId: string, online: boolean) {
+async function broadcastPresence(
+  userId: string,
+  online: boolean,
+  lastActiveAt: Date,
+) {
   const partnerIds = await getConversationPartnerIds(userId);
   for (const partnerId of partnerIds) {
-    io?.to(`user:${partnerId}`).emit("presence:update", { userId, online });
+    io?.to(`user:${partnerId}`).emit("presence:update", {
+      userId,
+      online,
+      lastActiveAt: lastActiveAt.toISOString(),
+    });
   }
 }
 const callMessageInclude = {
   sender: { select: postAuthorSelect },
   reactions: { select: { userId: true, emoji: true } },
+  replyTo: { select: messageReplySelect },
 } as const;
 
 async function emitCallMessage(
@@ -175,7 +189,11 @@ export function initSocket(httpServer: HttpServer): Server {
     const previousCount = onlineCounts.get(userId) ?? 0;
     onlineCounts.set(userId, previousCount + 1);
     if (previousCount === 0) {
-      void broadcastPresence(userId, true).catch((error) =>
+      const now = new Date();
+      void prisma.user
+        .update({ where: { id: userId }, data: { lastActiveAt: now } })
+        .catch((error) => console.error("presence timestamp failed", error));
+      void broadcastPresence(userId, true, now).catch((error) =>
         console.error("presence broadcast failed", error),
       );
     }
@@ -184,10 +202,22 @@ export function initSocket(httpServer: HttpServer): Server {
     // current status instead of waiting for their next state change.
     socket.on("presence:query", (targetUserId: unknown) => {
       if (typeof targetUserId !== "string") return;
-      socket.emit("presence:update", {
-        userId: targetUserId,
-        online: (onlineCounts.get(targetUserId) ?? 0) > 0,
-      });
+      void prisma.user
+        .findUnique({
+          where: { id: targetUserId },
+          select: { lastActiveAt: true },
+        })
+        .then((target) => {
+          if (!target) return;
+          socket.emit("presence:update", {
+            userId: targetUserId,
+            online:
+              (onlineCounts.get(targetUserId) ?? 0) > 0 ||
+              offlineTimers.has(targetUserId),
+            lastActiveAt: target.lastActiveAt.toISOString(),
+          });
+        })
+        .catch((error) => console.error("presence query failed", error));
     });
 
     // Replays any call this user is being rung for right now — covers a
@@ -211,9 +241,11 @@ export function initSocket(httpServer: HttpServer): Server {
         onlineCounts.delete(userId);
         const timer = setTimeout(() => {
           offlineTimers.delete(userId);
-          void broadcastPresence(userId, false).catch((error) =>
-            console.error("presence broadcast failed", error),
-          );
+          const lastActiveAt = new Date();
+          void prisma.user
+            .update({ where: { id: userId }, data: { lastActiveAt } })
+            .then(() => broadcastPresence(userId, false, lastActiveAt))
+            .catch((error) => console.error("presence broadcast failed", error));
         }, OFFLINE_GRACE_MS);
         offlineTimers.set(userId, timer);
       } else {

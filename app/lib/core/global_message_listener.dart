@@ -46,6 +46,7 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
     ref.listenManual(activeConversationIdProvider, (previous, next) {
       if (next != null) {
         widget.scaffoldMessengerKey.currentState?.hideCurrentSnackBar();
+        NotificationService().dismissMessageNotification(next);
       }
     });
   }
@@ -53,8 +54,16 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
   void _onMessage(ChatMessage message) {
     final myId = ref.read(authControllerProvider).value?.user?.id;
     if (message.sender.id == myId) return; // our own echoed message
-    if (ref.read(socketServiceProvider)?.isMessageMuted(message.conversationId) ??
+    if (ref
+            .read(socketServiceProvider)
+            ?.isMessageMuted(message.conversationId) ??
         false) {
+      return;
+    }
+
+    // The message is already on-screen and immediately marked read by
+    // ConversationScreen. Suppress every alert surface for this exact thread.
+    if (ref.read(activeConversationIdProvider) == message.conversationId) {
       return;
     }
 
@@ -77,18 +86,14 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
             MessageType.text => 'Sent a message',
           };
 
-    // Always create the OS notification. In particular, this covers the
-    // common test case where the same conversation is open on the phone.
-    // The in-app banner remains suppressed there because the message is
-    // already visible in the thread.
+    // One foreground alert path owns both the system notification and custom
+    // sound. Foreground FCM is deliberately ignored, preventing duplicates.
     NotificationService().showMessageNotification(
       title: name,
       body: preview,
       conversationId: message.conversationId,
     );
-    if (ref.read(activeConversationIdProvider) == message.conversationId) {
-      return; // already looking at this chat
-    }
+    NotificationService().playMessageNotification();
 
     widget.scaffoldMessengerKey.currentState
       ?..hideCurrentSnackBar()

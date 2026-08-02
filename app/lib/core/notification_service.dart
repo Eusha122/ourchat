@@ -102,8 +102,11 @@ class NotificationService {
       // This makes the service resilient if a platform lifecycle race means
       // `main()` has not completed initialization yet.
       await init();
+      final notificationId = conversationId == null
+          ? _notificationId++
+          : _messageNotificationId(conversationId);
       await _plugin.show(
-        _notificationId++,
+        notificationId,
         title,
         body,
         const NotificationDetails(
@@ -126,6 +129,24 @@ class NotificationService {
     } catch (_) {
       // Silently handle error
     }
+  }
+
+  /// Dismisses the one stable notification slot for a conversation when the
+  /// user enters it. The deterministic ID works across Flutter isolates too,
+  /// including a notification created by the FCM background handler.
+  Future<void> dismissMessageNotification(String conversationId) async {
+    try {
+      await _plugin.cancel(_messageNotificationId(conversationId));
+    } catch (_) {}
+  }
+
+  int _messageNotificationId(String conversationId) {
+    var hash = 2166136261;
+    for (final codeUnit in conversationId.codeUnits) {
+      hash = (hash ^ codeUnit) * 16777619;
+      hash &= 0x3fffffff;
+    }
+    return 100000 + hash;
   }
 
   /// Checks whether the app process was just cold-started by tapping a

@@ -74,6 +74,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool _isSending = false;
   bool _otherIsTyping = false;
   bool _otherIsOnline = false;
+  DateTime? _otherLastActiveAt;
+  ChatMessage? _replyingTo;
   String? _error;
 
   @override
@@ -173,10 +175,17 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     final action = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (sheetContext) =>
-          _MessageActionSheet(canUnsend: isMine && !message.isUnsent),
+      builder: (sheetContext) => _MessageActionSheet(
+        canUnsend: isMine && !message.isUnsent,
+        canReply: !message.isUnsent,
+      ),
     );
     if (!mounted || action == null) return;
+
+    if (action == 'reply') {
+      _startReply(message);
+      return;
+    }
 
     try {
       final api = ref.read(conversationsApiProvider);
@@ -204,6 +213,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       }
     }
   }
+
+  void _startReply(ChatMessage message) {
+    if (message.isUnsent) return;
+    setState(() => _replyingTo = message);
+  }
+
+  void _cancelReply() => setState(() => _replyingTo = null);
 
   void _onTyping(TypingEvent event) {
     if (!mounted) return;
@@ -247,7 +263,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   void _onPresence(PresenceEvent event) {
     if (!mounted) return;
-    setState(() => _otherIsOnline = event.online);
+    setState(() {
+      _otherIsOnline = event.online;
+      _otherLastActiveAt = event.lastActiveAt ?? _otherLastActiveAt;
+    });
   }
 
   Future<void> _load() async {
@@ -291,17 +310,22 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     final text = _textController.text.trim();
     if (text.isEmpty || _isSending) return;
 
+    final replyToId = _replyingTo?.id;
     setState(() => _isSending = true);
     _textController.clear();
     ref.read(socketServiceProvider)?.sendTyping(widget.conversationId, false);
     try {
       final message = await ref
           .read(conversationsApiProvider)
-          .sendMessage(widget.conversationId, text);
+          .sendMessage(widget.conversationId, text, replyToId: replyToId);
       if (!mounted) return;
-      setState(() => _messages.insert(0, message));
+      setState(() {
+        _messages.insert(0, message);
+        _replyingTo = null;
+      });
     } on ConversationsApiException catch (e) {
       if (!mounted) return;
+      _textController.text = text;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(e.message)));
@@ -340,6 +364,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     required bool isImage,
   }) async {
     if (_isSending) return;
+    final replyToId = _replyingTo?.id;
     setState(() => _isSending = true);
     try {
       final message = await ref
@@ -349,9 +374,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
             filePath: filePath,
             fileName: fileName,
             isImage: isImage,
+            replyToId: replyToId,
           );
       if (!mounted) return;
-      setState(() => _messages.insert(0, message));
+      setState(() {
+        _messages.insert(0, message);
+        _replyingTo = null;
+      });
     } on ConversationsApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -382,6 +411,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 avatarUrl: other.avatarUrl,
                 isTyping: _otherIsTyping,
                 isOnline: _otherIsOnline,
+                lastActiveAt: _otherLastActiveAt,
                 onVideoCall: () => _startCall(CallKind.video),
                 onAudioCall: () => _startCall(CallKind.audio),
               ),
@@ -396,6 +426,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 onCamera: () => _pickAndSendImage(ImageSource.camera),
                 onPhotos: () => _pickAndSendImage(ImageSource.gallery),
                 onFiles: _pickAndSendFile,
+                replyingTo: _replyingTo,
+                onCancelReply: _cancelReply,
               ),
             ],
           ),
@@ -529,6 +561,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
               ? CrossAxisAlignment.end
               : CrossAxisAlignment.start,
           children: [
+            if (message.replyTo != null) ...[
+              _ReplyQuote(reply: message.replyTo!, mine: isMine),
+              const SizedBox(height: 4),
+            ],
             content,
             if (!message.isUnsent && message.reactions.isNotEmpty)
               _MessageReactionStrip(
@@ -562,10 +598,22 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           );
         }
 
-        return _Appear(
-          child: _MessageActionTarget(
-            onLongPress: () => _showMessageActions(message, isMine),
-            child: body,
+        return Dismissible(
+          key: ValueKey('reply-swipe-${message.id}'),
+          direction: isMine
+              ? DismissDirection.endToStart
+              : DismissDirection.startToEnd,
+          confirmDismiss: (_) async {
+            _startReply(message);
+            return false;
+          },
+          background: _ReplySwipeBackground(mine: isMine),
+          secondaryBackground: _ReplySwipeBackground(mine: isMine),
+          child: _Appear(
+            child: _MessageActionTarget(
+              onLongPress: () => _showMessageActions(message, isMine),
+              child: body,
+            ),
           ),
         );
       },
@@ -734,6 +782,7 @@ class _ConversationHeader extends StatelessWidget {
     required this.avatarUrl,
     required this.isTyping,
     required this.isOnline,
+    required this.lastActiveAt,
     required this.onVideoCall,
     required this.onAudioCall,
   });
@@ -742,6 +791,7 @@ class _ConversationHeader extends StatelessWidget {
   final String? avatarUrl;
   final bool isTyping;
   final bool isOnline;
+  final DateTime? lastActiveAt;
   final VoidCallback onVideoCall;
   final VoidCallback onAudioCall;
 
@@ -843,7 +893,7 @@ class _ConversationHeader extends StatelessWidget {
                           switchInCurve: _ease,
                           switchOutCurve: _ease,
                           child: Row(
-                            key: ValueKey('$isTyping-$isOnline'),
+                            key: ValueKey('$isTyping-$isOnline-$lastActiveAt'),
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               if (!isTyping && isOnline) ...[
@@ -862,7 +912,7 @@ class _ConversationHeader extends StatelessWidget {
                                     ? 'typing…'
                                     : isOnline
                                     ? 'Online'
-                                    : 'Offline',
+                                    : _lastSeenLabel(lastActiveAt),
                                 style: const TextStyle(
                                   fontFamily: 'Poppins',
                                   color: _muted,
@@ -897,6 +947,16 @@ class _ConversationHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+String _lastSeenLabel(DateTime? lastActiveAt) {
+  if (lastActiveAt == null) return 'Offline';
+  final elapsed = DateTime.now().difference(lastActiveAt.toLocal());
+  if (elapsed.inMinutes < 1) return 'Active just now';
+  if (elapsed.inMinutes < 60) return 'Active ${elapsed.inMinutes}m ago';
+  if (elapsed.inHours < 24) return 'Active ${elapsed.inHours}h ago';
+  if (elapsed.inDays < 7) return 'Active ${elapsed.inDays}d ago';
+  return 'Offline';
 }
 
 class _OutlineCircleButton extends StatefulWidget {
@@ -977,6 +1037,109 @@ class _MessageActionTarget extends StatelessWidget {
   );
 }
 
+/// A reply stays attached to the new message but has its own quiet surface,
+/// so a quoted photo/file/call remains understandable even after scrolling.
+class _ReplyQuote extends StatelessWidget {
+  const _ReplyQuote({required this.reply, required this.mine});
+
+  final MessageReply reply;
+  final bool mine;
+
+  @override
+  Widget build(BuildContext context) {
+    final senderName = reply.sender.displayName?.trim().isNotEmpty == true
+        ? reply.sender.displayName!.trim()
+        : '@${reply.sender.username}';
+    final foreground = mine ? Colors.white : _ink;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 270),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(10, 8, 12, 8),
+        decoration: BoxDecoration(
+          color: mine
+              ? Colors.white.withValues(alpha: 0.16)
+              : const Color(0xFFFFFFFF).withValues(alpha: 0.19),
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(
+            color: mine
+                ? Colors.white.withValues(alpha: 0.26)
+                : Colors.white.withValues(alpha: 0.28),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 3,
+              height: 31,
+              decoration: BoxDecoration(
+                color: mine ? Colors.white : _purple,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    senderName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      color: foreground,
+                      fontSize: 10.5,
+                      height: 1.1,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    reply.preview,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      color: foreground.withValues(alpha: 0.78),
+                      fontSize: 10.2,
+                      height: 1.15,
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReplySwipeBackground extends StatelessWidget {
+  const _ReplySwipeBackground({required this.mine});
+
+  final bool mine;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+    child: Container(
+      width: 42,
+      height: 42,
+      margin: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.18),
+        shape: BoxShape.circle,
+      ),
+      child: const Icon(Icons.reply_rounded, color: Colors.white, size: 20),
+    ),
+  );
+}
+
 class _MessageReactionStrip extends StatelessWidget {
   const _MessageReactionStrip({
     required this.reactions,
@@ -1040,9 +1203,10 @@ class _MessageReactionStrip extends StatelessWidget {
 }
 
 class _MessageActionSheet extends StatelessWidget {
-  const _MessageActionSheet({required this.canUnsend});
+  const _MessageActionSheet({required this.canUnsend, required this.canReply});
 
   final bool canUnsend;
+  final bool canReply;
   static const _reactions = ['❤️', '👍', '😂', '😮', '😢'];
 
   @override
@@ -1078,6 +1242,12 @@ class _MessageActionSheet extends StatelessWidget {
                   .toList(growable: false),
             ),
             const SizedBox(height: 12),
+            if (canReply)
+              _SheetAction(
+                icon: Icons.reply_rounded,
+                label: 'Reply',
+                onTap: () => Navigator.of(context).pop('reply'),
+              ),
             _SheetAction(
               icon: Icons.visibility_off_outlined,
               label: 'Remove for me',
@@ -1877,6 +2047,84 @@ class _FileBubble extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────
+class _ComposerReplyPreview extends StatelessWidget {
+  const _ComposerReplyPreview({required this.message, required this.onCancel});
+
+  final ChatMessage message;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = message.sender.displayName?.trim().isNotEmpty == true
+        ? message.sender.displayName!.trim()
+        : '@${message.sender.username}';
+    final preview = message.text?.trim().isNotEmpty == true
+        ? message.text!.trim()
+        : switch (message.type) {
+            MessageType.image => 'Photo',
+            MessageType.file => message.linkTitle ?? 'File',
+            MessageType.link => message.linkTitle ?? 'Link',
+            MessageType.call => 'Call',
+            MessageType.text => 'Message',
+          };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(15, 10, 8, 4),
+      child: Row(
+        children: [
+          Container(
+            width: 3,
+            height: 33,
+            decoration: BoxDecoration(
+              color: _purple,
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Replying to $name',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: 'Poppins',
+                    color: _purple,
+                    fontSize: 10.5,
+                    height: 1.1,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  preview,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: 'Poppins',
+                    color: _muted,
+                    fontSize: 10.5,
+                    height: 1.15,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Cancel reply',
+            onPressed: onCancel,
+            icon: const Icon(Icons.close_rounded, size: 19, color: _muted),
+            splashRadius: 18,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // Composer
 // ─────────────────────────────────────────────────────────────
 
@@ -1889,6 +2137,8 @@ class _Composer extends StatefulWidget {
     required this.onCamera,
     required this.onPhotos,
     required this.onFiles,
+    required this.replyingTo,
+    required this.onCancelReply,
   });
 
   final TextEditingController controller;
@@ -1898,6 +2148,8 @@ class _Composer extends StatefulWidget {
   final VoidCallback onCamera;
   final VoidCallback onPhotos;
   final VoidCallback onFiles;
+  final ChatMessage? replyingTo;
+  final VoidCallback onCancelReply;
 
   @override
   State<_Composer> createState() => _ComposerState();
@@ -1915,6 +2167,17 @@ class _ComposerState extends State<_Composer> {
         setState(() => _focused = _focusNode.hasFocus);
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant _Composer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.replyingTo != null &&
+        widget.replyingTo?.id != oldWidget.replyingTo?.id) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusNode.requestFocus();
+      });
+    }
   }
 
   @override
@@ -1963,88 +2226,107 @@ class _ComposerState extends State<_Composer> {
                     ),
                   ],
                 ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(11, 0, 0, 13),
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => _showComingSoon(context, 'Voice messages'),
-                        child: Container(
-                          width: 38,
-                          height: 38,
-                          alignment: Alignment.center,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [Color(0xFFF3F1FF), Color(0xFFEBE8FF)],
+                    if (widget.replyingTo != null)
+                      _ComposerReplyPreview(
+                        message: widget.replyingTo!,
+                        onCancel: widget.onCancelReply,
+                      ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(11, 0, 0, 13),
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () =>
+                                _showComingSoon(context, 'Voice messages'),
+                            child: Container(
+                              width: 38,
+                              height: 38,
+                              alignment: Alignment.center,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    Color(0xFFF3F1FF),
+                                    Color(0xFFEBE8FF),
+                                  ],
+                                ),
+                              ),
+                              child: const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CustomPaint(painter: _MicIconPainter()),
+                              ),
                             ),
                           ),
+                        ),
+                        Expanded(
+                          child: TextField(
+                            controller: widget.controller,
+                            focusNode: _focusNode,
+                            minLines: 1,
+                            maxLines: 4,
+                            cursorColor: _purple,
+                            cursorWidth: 1.6,
+                            cursorRadius: const Radius.circular(2),
+                            style: const TextStyle(
+                              fontFamily: 'Poppins',
+                              color: _ink,
+                              fontSize: 12.5,
+                              height: 1.4,
+                              fontWeight: FontWeight.w400,
+                            ),
+                            onChanged: widget.onTypingChanged,
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              filled: false,
+                              hintText: 'Type a message',
+                              hintStyle: TextStyle(
+                                fontFamily: 'Poppins',
+                                color: Color(0xFFA5A2B8),
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w400,
+                                letterSpacing: 0.1,
+                              ),
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              contentPadding: EdgeInsets.fromLTRB(
+                                12,
+                                23,
+                                0,
+                                23,
+                              ),
+                            ),
+                          ),
+                        ),
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => showAttachmentSheet(
+                            context,
+                            onCamera: widget.onCamera,
+                            onPhotos: widget.onPhotos,
+                            onFiles: widget.onFiles,
+                          ),
                           child: const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CustomPaint(painter: _MicIconPainter()),
+                            width: 48,
+                            height: 64,
+                            child: Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CustomPaint(painter: _ClipIconPainter()),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                    Expanded(
-                      child: TextField(
-                        controller: widget.controller,
-                        focusNode: _focusNode,
-                        minLines: 1,
-                        maxLines: 4,
-                        cursorColor: _purple,
-                        cursorWidth: 1.6,
-                        cursorRadius: const Radius.circular(2),
-                        style: const TextStyle(
-                          fontFamily: 'Poppins',
-                          color: _ink,
-                          fontSize: 12.5,
-                          height: 1.4,
-                          fontWeight: FontWeight.w400,
-                        ),
-                        onChanged: widget.onTypingChanged,
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          filled: false,
-                          hintText: 'Type a message',
-                          hintStyle: TextStyle(
-                            fontFamily: 'Poppins',
-                            color: Color(0xFFA5A2B8),
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w400,
-                            letterSpacing: 0.1,
-                          ),
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          contentPadding: EdgeInsets.fromLTRB(12, 23, 0, 23),
-                        ),
-                      ),
-                    ),
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => showAttachmentSheet(
-                        context,
-                        onCamera: widget.onCamera,
-                        onPhotos: widget.onPhotos,
-                        onFiles: widget.onFiles,
-                      ),
-                      child: const SizedBox(
-                        width: 48,
-                        height: 64,
-                        child: Center(
-                          child: SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CustomPaint(painter: _ClipIconPainter()),
-                          ),
-                        ),
-                      ),
+                      ],
                     ),
                   ],
                 ),

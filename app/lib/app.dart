@@ -20,6 +20,7 @@ import 'core/notification_service.dart';
 import 'core/push_notification_service.dart';
 import 'core/theme.dart';
 import 'features/auth/state/auth_controller.dart';
+import 'features/chat/state/chat_providers.dart';
 import 'features/users/state/users_providers.dart';
 import 'router/app_router.dart';
 
@@ -30,13 +31,15 @@ class OurChatApp extends ConsumerStatefulWidget {
   ConsumerState<OurChatApp> createState() => _OurChatAppState();
 }
 
-class _OurChatAppState extends ConsumerState<OurChatApp> {
+class _OurChatAppState extends ConsumerState<OurChatApp>
+    with WidgetsBindingObserver {
   final _scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
   StreamSubscription<String>? _messageTapSub;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // The Android permission dialog needs a resumed Activity, which isn't
     // guaranteed yet during main() — ask once the first frame is up.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -69,6 +72,13 @@ class _OurChatAppState extends ConsumerState<OurChatApp> {
     }, fireImmediately: true);
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      ref.read(socketServiceProvider)?.reconnect();
+    }
+  }
+
   void _openConversation(String conversationId) {
     final context = rootNavigatorKey.currentContext;
     if (context == null || !context.mounted) return;
@@ -77,6 +87,7 @@ class _OurChatAppState extends ConsumerState<OurChatApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _messageTapSub?.cancel();
     super.dispose();
   }
