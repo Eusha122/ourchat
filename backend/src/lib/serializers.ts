@@ -93,6 +93,7 @@ export function toPublicMessage(message: MessageWithSender) {
     linkTitle: message.linkTitle,
     linkImageUrl: message.linkImageUrl,
     fileSize: message.fileSize,
+    voiceDurationSeconds: message.voiceDurationSeconds,
     callKind: message.callKind,
     callStatus: message.callStatus,
     callDurationSeconds: message.callDurationSeconds,

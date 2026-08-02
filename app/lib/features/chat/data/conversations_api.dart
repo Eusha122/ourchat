@@ -127,11 +127,16 @@ class ConversationsApi {
     required String fileName,
     required bool isImage,
     String? replyToId,
+    bool isVoice = false,
+    int? voiceDurationSeconds,
   }) async {
     return _handle(() async {
       final form = FormData.fromMap({
         'type': isImage ? 'IMAGE' : 'FILE',
         if (replyToId != null) 'replyToId': replyToId,
+        if (isVoice) 'isVoice': 'true',
+        if (voiceDurationSeconds != null)
+          'voiceDurationSeconds': voiceDurationSeconds.toString(),
         'file': await MultipartFile.fromFile(filePath, filename: fileName),
       });
       final response = await _dio.post(

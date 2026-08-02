@@ -35,13 +35,16 @@ const messageInclude = {
 function messagePreviewText(message: {
   type: string;
   text: string | null;
+  voiceDurationSeconds?: number | null;
 }): string {
   if (message.text) return message.text;
   switch (message.type) {
     case "IMAGE":
       return "Sent a photo";
     case "FILE":
-      return "Sent a file";
+      return message.voiceDurationSeconds != null
+        ? "Sent a voice message"
+        : "Sent a file";
     case "LINK":
       return "Sent a link";
     default:
@@ -171,7 +174,7 @@ conversationsRouter.get("/", requireAuth, async (req, res) => {
         lastMessage: lastMessage
           ? {
               id: lastMessage.id,
-              text: lastMessage.text,
+              text: messagePreviewText(lastMessage),
               senderId: lastMessage.senderId,
               createdAt: lastMessage.createdAt,
             }
@@ -257,7 +260,7 @@ conversationsRouter.get("/:conversationId", requireAuth, async (req, res) => {
       lastMessage: lastMessage
         ? {
             id: lastMessage.id,
-            text: lastMessage.text,
+            text: messagePreviewText(lastMessage),
             senderId: lastMessage.senderId,
             createdAt: lastMessage.createdAt,
           }
@@ -323,6 +326,7 @@ async function handleSendMessage(req: Request, res: Response) {
   let linkTitle: string | null = null;
   let linkImageUrl: string | null = null;
   let fileSize: number | null = null;
+  let voiceDurationSeconds: number | null = null;
   let replyToId: string | null = null;
 
   if (parsed.data.replyToId) {
@@ -346,6 +350,19 @@ async function handleSendMessage(req: Request, res: Response) {
       res.status(400).json({ error: "No file uploaded" });
       return;
     }
+    if (parsed.data.type === "IMAGE" && parsed.data.isVoice) {
+      res.status(400).json({ error: "Voice messages must be audio files" });
+      return;
+    }
+    if (
+      parsed.data.type === "FILE" &&
+      parsed.data.isVoice &&
+      (!req.file.mimetype.startsWith("audio/") ||
+        !parsed.data.voiceDurationSeconds)
+    ) {
+      res.status(400).json({ error: "Invalid voice message" });
+      return;
+    }
     const originalName = req.file.originalname || "file";
     const dotIndex = originalName.lastIndexOf(".");
     const extension = dotIndex >= 0 ? originalName.slice(dotIndex + 1) : "bin";
@@ -361,6 +378,9 @@ async function handleSendMessage(req: Request, res: Response) {
     if (parsed.data.type === "IMAGE") {
       linkImageUrl = uploadedUrl;
     } else {
+      if (parsed.data.isVoice) {
+        voiceDurationSeconds = parsed.data.voiceDurationSeconds ?? null;
+      }
       linkUrl = uploadedUrl;
       linkTitle = originalName;
       fileSize = req.file.size;
@@ -377,6 +397,7 @@ async function handleSendMessage(req: Request, res: Response) {
       linkTitle,
       linkImageUrl,
       fileSize,
+      voiceDurationSeconds,
       replyToId,
     },
     include: messageInclude,
@@ -407,7 +428,7 @@ async function handleSendMessage(req: Request, res: Response) {
       conversationId,
       lastMessage: {
         id: message.id,
-        text: message.text,
+        text: messagePreviewText(message),
         senderId: message.senderId,
         createdAt: message.createdAt,
       },

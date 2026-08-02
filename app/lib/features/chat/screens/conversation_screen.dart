@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -11,6 +11,9 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../auth/state/auth_controller.dart';
@@ -37,11 +40,7 @@ const _sendBottom = Color(0xFF5648F5);
 const _motion = Duration(milliseconds: 250);
 const _ease = Curves.easeInOutCubic;
 
-void _showComingSoon(BuildContext context, String feature) {
-  ScaffoldMessenger.of(
-    context,
-  ).showSnackBar(SnackBar(content: Text('$feature isn\'t available yet')));
-}
+final _voicePlayback = _VoicePlaybackService();
 
 class ConversationScreen extends ConsumerStatefulWidget {
   const ConversationScreen({
@@ -60,6 +59,7 @@ class ConversationScreen extends ConsumerStatefulWidget {
 class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   final _textController = TextEditingController();
   final _scrollController = ScrollController();
+  final _voiceRecorder = AudioRecorder();
   final List<ChatMessage> _messages = [];
   StreamSubscription<ChatMessage>? _messageSub;
   StreamSubscription<ChatMessage>? _messageUpdateSub;
@@ -69,6 +69,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   StreamSubscription<ConversationReadEvent>? _readSub;
   StreamSubscription<String>? _deletedSub;
   Timer? _typingResetTimer;
+  Timer? _recordingTimer;
   DateTime? _otherLastReadAt;
   bool _isLoading = true;
   bool _isSending = false;
@@ -76,6 +77,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool _otherIsOnline = false;
   DateTime? _otherLastActiveAt;
   ChatMessage? _replyingTo;
+  String? _voiceRecordingPath;
+  Duration _recordingDuration = Duration.zero;
+  bool _isRecordingVoice = false;
   String? _error;
 
   @override
@@ -144,6 +148,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     _readSub?.cancel();
     _deletedSub?.cancel();
     _typingResetTimer?.cancel();
+    _recordingTimer?.cancel();
+    unawaited(_voiceRecorder.cancel());
+    _voiceRecorder.dispose();
     _textController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -362,6 +369,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     required String filePath,
     required String fileName,
     required bool isImage,
+    bool isVoice = false,
+    int? voiceDurationSeconds,
+    bool deleteAfterUpload = false,
   }) async {
     if (_isSending) return;
     final replyToId = _replyingTo?.id;
@@ -375,6 +385,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
             fileName: fileName,
             isImage: isImage,
             replyToId: replyToId,
+            isVoice: isVoice,
+            voiceDurationSeconds: voiceDurationSeconds,
           );
       if (!mounted) return;
       setState(() {
@@ -387,8 +399,119 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text(e.message)));
     } finally {
+      if (deleteAfterUpload) {
+        try {
+          final file = File(filePath);
+          if (await file.exists()) await file.delete();
+        } catch (_) {
+          // The upload has already completed; cache cleanup is best effort.
+        }
+      }
       if (mounted) setState(() => _isSending = false);
     }
+  }
+
+  Future<void> _startVoiceRecording() async {
+    if (_isSending || _isRecordingVoice) return;
+    try {
+      if (!await _voiceRecorder.hasPermission()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Allow microphone access to record a voice message.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      final cache = await getTemporaryDirectory();
+      final path =
+          '${cache.path}${Platform.pathSeparator}voice-${DateTime.now().microsecondsSinceEpoch}.m4a';
+      await _voiceRecorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 64000,
+          sampleRate: 44100,
+          numChannels: 1,
+          autoGain: true,
+          echoCancel: true,
+          noiseSuppress: true,
+        ),
+        path: path,
+      );
+      if (!mounted) return;
+      setState(() {
+        _voiceRecordingPath = path;
+        _recordingDuration = Duration.zero;
+        _isRecordingVoice = true;
+      });
+      _recordingTimer?.cancel();
+      _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted || !_isRecordingVoice) return;
+        if (_recordingDuration >= const Duration(minutes: 5)) {
+          _stopAndSendVoiceRecording();
+          return;
+        }
+        setState(() => _recordingDuration += const Duration(seconds: 1));
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not start voice recording.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _cancelVoiceRecording() async {
+    if (!_isRecordingVoice) return;
+    _recordingTimer?.cancel();
+    await _voiceRecorder.cancel();
+    if (mounted) {
+      setState(() {
+        _isRecordingVoice = false;
+        _voiceRecordingPath = null;
+        _recordingDuration = Duration.zero;
+      });
+    }
+  }
+
+  Future<void> _stopAndSendVoiceRecording() async {
+    if (!_isRecordingVoice) return;
+    _recordingTimer?.cancel();
+    final duration = _recordingDuration;
+    final recordedPath = await _voiceRecorder.stop() ?? _voiceRecordingPath;
+    if (!mounted) return;
+    setState(() {
+      _isRecordingVoice = false;
+      _voiceRecordingPath = null;
+      _recordingDuration = Duration.zero;
+    });
+    if (recordedPath == null || duration < const Duration(seconds: 1)) {
+      if (recordedPath != null) {
+        try {
+          await File(recordedPath).delete();
+        } catch (_) {}
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Hold to record a longer voice message.'),
+          ),
+        );
+      }
+      return;
+    }
+    await _sendAttachment(
+      filePath: recordedPath,
+      fileName: 'voice-message.m4a',
+      isImage: false,
+      isVoice: true,
+      voiceDurationSeconds: duration.inSeconds,
+      deleteAfterUpload: true,
+    );
   }
 
   @override
@@ -426,6 +549,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 onCamera: () => _pickAndSendImage(ImageSource.camera),
                 onPhotos: () => _pickAndSendImage(ImageSource.gallery),
                 onFiles: _pickAndSendFile,
+                isRecording: _isRecordingVoice,
+                recordingDuration: _recordingDuration,
+                onRecordStart: _startVoiceRecording,
+                onRecordStop: _stopAndSendVoiceRecording,
+                onRecordCancel: _cancelVoiceRecording,
                 replyingTo: _replyingTo,
                 onCancelReply: _cancelReply,
               ),
@@ -545,7 +673,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   message: message,
                   mine: isMine,
                 ),
-                MessageType.file => _FileBubble(message: message, mine: isMine),
+                MessageType.file =>
+                  message.isVoiceMessage
+                      ? _VoiceMessageBubble(message: message, mine: isMine)
+                      : _FileBubble(message: message, mine: isMine),
                 MessageType.call => _CallHistoryBubble(
                   message: message,
                   mine: isMine,
@@ -2047,6 +2178,232 @@ class _FileBubble extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────
+class _VoicePlaybackState {
+  const _VoicePlaybackState({
+    required this.messageId,
+    required this.position,
+    required this.isPlaying,
+  });
+
+  final String? messageId;
+  final Duration position;
+  final bool isPlaying;
+}
+
+/// One player for all voice bubbles prevents overlapping audio when a user
+/// switches messages rapidly, while every bubble can still rebuild from this
+/// lightweight broadcast state.
+class _VoicePlaybackService {
+  _VoicePlaybackService() {
+    _player.positionStream.listen((_) => _publish());
+    _player.playerStateStream.listen((_) => _publish());
+  }
+
+  final _player = AudioPlayer();
+  final _states = StreamController<_VoicePlaybackState>.broadcast();
+  String? _messageId;
+
+  Stream<_VoicePlaybackState> get states => _states.stream;
+
+  Future<void> toggle(ChatMessage message) async {
+    final url = message.linkUrl;
+    if (url == null || url.isEmpty) return;
+    try {
+      if (_messageId == message.id) {
+        if (_player.playing) {
+          await _player.pause();
+        } else {
+          final duration = _player.duration;
+          if (duration != null && _player.position >= duration) {
+            await _player.seek(Duration.zero);
+          }
+          await _player.play();
+        }
+      } else {
+        _messageId = message.id;
+        await _player.setUrl(url);
+        await _player.play();
+      }
+    } catch (_) {
+      _messageId = null;
+    } finally {
+      _publish();
+    }
+  }
+
+  void _publish() {
+    if (_states.isClosed) return;
+    _states.add(
+      _VoicePlaybackState(
+        messageId: _messageId,
+        position: _player.position,
+        isPlaying: _player.playing,
+      ),
+    );
+  }
+}
+
+class _VoiceMessageBubble extends StatefulWidget {
+  const _VoiceMessageBubble({required this.message, required this.mine});
+
+  final ChatMessage message;
+  final bool mine;
+
+  @override
+  State<_VoiceMessageBubble> createState() => _VoiceMessageBubbleState();
+}
+
+class _VoiceMessageBubbleState extends State<_VoiceMessageBubble> {
+  StreamSubscription<_VoicePlaybackState>? _playbackSub;
+  Duration _position = Duration.zero;
+  bool _playing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _playbackSub = _voicePlayback.states.listen((state) {
+      if (!mounted) return;
+      final active = state.messageId == widget.message.id;
+      setState(() {
+        _position = active ? state.position : Duration.zero;
+        _playing = active && state.isPlaying;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _playbackSub?.cancel();
+    super.dispose();
+  }
+
+  String _timeLabel(Duration value) {
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return value.inMinutes.toString() + ':' + seconds;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = Duration(
+      seconds: widget.message.voiceDurationSeconds ?? 0,
+    );
+    final progress = duration.inMilliseconds == 0
+        ? 0.0
+        : (_position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
+    final foreground = widget.mine ? const Color(0xFF241F3D) : Colors.white;
+    final maxWidth = MediaQuery.sizeOf(context).width * 0.74;
+    return Align(
+      alignment: widget.mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        margin: const EdgeInsets.symmetric(vertical: 5),
+        padding: const EdgeInsets.fromLTRB(10, 9, 16, 9),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(25),
+          gradient: widget.mine
+              ? const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFFFFFFFF), Color(0xFFF6F5FF)],
+                )
+              : null,
+          color: widget.mine ? null : Colors.white.withValues(alpha: 0.16),
+          border: widget.mine
+              ? null
+              : Border.all(color: Colors.white.withValues(alpha: 0.22)),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF1E1550).withValues(alpha: 0.16),
+              blurRadius: 32,
+              offset: const Offset(0, 14),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: _playing ? 'Pause voice message' : 'Play voice message',
+              onPressed: () => _voicePlayback.toggle(widget.message),
+              icon: Icon(
+                _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                color: widget.mine ? _purple : Colors.white,
+                size: 27,
+              ),
+            ),
+            SizedBox(
+              width: 118,
+              height: 30,
+              child: CustomPaint(
+                painter: _VoiceWavePainter(
+                  progress: progress,
+                  active: widget.mine ? _purple : Colors.white,
+                  inactive: foreground.withValues(alpha: 0.28),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _timeLabel(
+                _playing || _position > Duration.zero ? _position : duration,
+              ),
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                color: foreground.withValues(alpha: 0.80),
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VoiceWavePainter extends CustomPainter {
+  const _VoiceWavePainter({
+    required this.progress,
+    required this.active,
+    required this.inactive,
+  });
+
+  final double progress;
+  final Color active;
+  final Color inactive;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const bars = 30;
+    final barWidth = size.width / (bars * 1.7);
+    final gap = (size.width - barWidth * bars) / (bars - 1);
+    for (var i = 0; i < bars; i++) {
+      final seed = (math.sin(i * 1.71) + 1) / 2;
+      final height = 7 + seed * (size.height - 7);
+      final paint = Paint()
+        ..color = i / (bars - 1) <= progress ? active : inactive;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            i * (barWidth + gap),
+            (size.height - height) / 2,
+            barWidth,
+            height,
+          ),
+          Radius.circular(barWidth),
+        ),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _VoiceWavePainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.active != active ||
+      oldDelegate.inactive != inactive;
+}
+
 class _ComposerReplyPreview extends StatelessWidget {
   const _ComposerReplyPreview({required this.message, required this.onCancel});
 
@@ -2128,6 +2485,105 @@ class _ComposerReplyPreview extends StatelessWidget {
 // Composer
 // ─────────────────────────────────────────────────────────────
 
+class _RecordingComposerRow extends StatelessWidget {
+  const _RecordingComposerRow({
+    required this.duration,
+    required this.onCancel,
+    required this.onStopAndSend,
+  });
+
+  final Duration duration;
+  final VoidCallback onCancel;
+  final VoidCallback onStopAndSend;
+
+  @override
+  Widget build(BuildContext context) {
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final label = duration.inMinutes.toString() + ':' + seconds;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: onCancel,
+            child: const Icon(
+              Icons.delete_outline_rounded,
+              color: Color(0xFFD95060),
+            ),
+          ),
+          const SizedBox(width: 12),
+          const _RecordingPulse(),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: const TextStyle(
+              fontFamily: 'Poppins',
+              color: _ink,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'Recording voice message',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                color: _muted,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Send voice message',
+            onPressed: onStopAndSend,
+            icon: const Icon(Icons.send_rounded, color: _purple),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RecordingPulse extends StatefulWidget {
+  const _RecordingPulse();
+
+  @override
+  State<_RecordingPulse> createState() => _RecordingPulseState();
+}
+
+class _RecordingPulseState extends State<_RecordingPulse>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 850),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ScaleTransition(
+    scale: Tween<double>(
+      begin: 0.78,
+      end: 1.15,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)),
+    child: const DecoratedBox(
+      decoration: BoxDecoration(
+        color: Color(0xFFD95060),
+        shape: BoxShape.circle,
+      ),
+      child: SizedBox(width: 11, height: 11),
+    ),
+  );
+}
+
 class _Composer extends StatefulWidget {
   const _Composer({
     required this.controller,
@@ -2137,6 +2593,11 @@ class _Composer extends StatefulWidget {
     required this.onCamera,
     required this.onPhotos,
     required this.onFiles,
+    required this.isRecording,
+    required this.recordingDuration,
+    required this.onRecordStart,
+    required this.onRecordStop,
+    required this.onRecordCancel,
     required this.replyingTo,
     required this.onCancelReply,
   });
@@ -2148,6 +2609,11 @@ class _Composer extends StatefulWidget {
   final VoidCallback onCamera;
   final VoidCallback onPhotos;
   final VoidCallback onFiles;
+  final bool isRecording;
+  final Duration recordingDuration;
+  final VoidCallback onRecordStart;
+  final VoidCallback onRecordStop;
+  final VoidCallback onRecordCancel;
   final ChatMessage? replyingTo;
   final VoidCallback onCancelReply;
 
@@ -2234,100 +2700,110 @@ class _ComposerState extends State<_Composer> {
                         message: widget.replyingTo!,
                         onCancel: widget.onCancelReply,
                       ),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(11, 0, 0, 13),
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () =>
-                                _showComingSoon(context, 'Voice messages'),
-                            child: Container(
-                              width: 38,
-                              height: 38,
-                              alignment: Alignment.center,
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: [
-                                    Color(0xFFF3F1FF),
-                                    Color(0xFFEBE8FF),
-                                  ],
+                    if (widget.isRecording)
+                      _RecordingComposerRow(
+                        duration: widget.recordingDuration,
+                        onCancel: widget.onRecordCancel,
+                        onStopAndSend: widget.onRecordStop,
+                      )
+                    else
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(11, 0, 0, 13),
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: widget.onRecordStart,
+                              child: Container(
+                                width: 38,
+                                height: 38,
+                                alignment: Alignment.center,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      Color(0xFFF3F1FF),
+                                      Color(0xFFEBE8FF),
+                                    ],
+                                  ),
+                                ),
+                                child: const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CustomPaint(
+                                    painter: _MicIconPainter(),
+                                  ),
                                 ),
                               ),
-                              child: const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CustomPaint(painter: _MicIconPainter()),
-                              ),
                             ),
                           ),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: widget.controller,
-                            focusNode: _focusNode,
-                            minLines: 1,
-                            maxLines: 4,
-                            cursorColor: _purple,
-                            cursorWidth: 1.6,
-                            cursorRadius: const Radius.circular(2),
-                            style: const TextStyle(
-                              fontFamily: 'Poppins',
-                              color: _ink,
-                              fontSize: 12.5,
-                              height: 1.4,
-                              fontWeight: FontWeight.w400,
-                            ),
-                            onChanged: widget.onTypingChanged,
-                            decoration: const InputDecoration(
-                              isDense: true,
-                              filled: false,
-                              hintText: 'Type a message',
-                              hintStyle: TextStyle(
+                          Expanded(
+                            child: TextField(
+                              controller: widget.controller,
+                              focusNode: _focusNode,
+                              minLines: 1,
+                              maxLines: 4,
+                              cursorColor: _purple,
+                              cursorWidth: 1.6,
+                              cursorRadius: const Radius.circular(2),
+                              style: const TextStyle(
                                 fontFamily: 'Poppins',
-                                color: Color(0xFFA5A2B8),
+                                color: _ink,
                                 fontSize: 12.5,
+                                height: 1.4,
                                 fontWeight: FontWeight.w400,
-                                letterSpacing: 0.1,
                               ),
-                              border: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              contentPadding: EdgeInsets.fromLTRB(
-                                12,
-                                23,
-                                0,
-                                23,
-                              ),
-                            ),
-                          ),
-                        ),
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () => showAttachmentSheet(
-                            context,
-                            onCamera: widget.onCamera,
-                            onPhotos: widget.onPhotos,
-                            onFiles: widget.onFiles,
-                          ),
-                          child: const SizedBox(
-                            width: 48,
-                            height: 64,
-                            child: Center(
-                              child: SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CustomPaint(painter: _ClipIconPainter()),
+                              onChanged: widget.onTypingChanged,
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                filled: false,
+                                hintText: 'Type a message',
+                                hintStyle: TextStyle(
+                                  fontFamily: 'Poppins',
+                                  color: Color(0xFFA5A2B8),
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w400,
+                                  letterSpacing: 0.1,
+                                ),
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                contentPadding: EdgeInsets.fromLTRB(
+                                  12,
+                                  23,
+                                  0,
+                                  23,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => showAttachmentSheet(
+                              context,
+                              onCamera: widget.onCamera,
+                              onPhotos: widget.onPhotos,
+                              onFiles: widget.onFiles,
+                            ),
+                            child: const SizedBox(
+                              width: 48,
+                              height: 64,
+                              child: Center(
+                                child: SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CustomPaint(
+                                    painter: _ClipIconPainter(),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                   ],
                 ),
               ),

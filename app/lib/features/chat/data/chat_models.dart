@@ -120,6 +120,7 @@ class ChatMessage {
     required this.linkTitle,
     required this.linkImageUrl,
     required this.fileSize,
+    required this.voiceDurationSeconds,
     required this.callKind,
     required this.callStatus,
     required this.callDurationSeconds,
@@ -140,6 +141,7 @@ class ChatMessage {
       linkTitle: json['linkTitle'] as String?,
       linkImageUrl: json['linkImageUrl'] as String?,
       fileSize: json['fileSize'] as int?,
+      voiceDurationSeconds: json['voiceDurationSeconds'] as int?,
       callKind: json['callKind'] as String?,
       callStatus: json['callStatus'] as String?,
       callDurationSeconds: json['callDurationSeconds'] as int?,
@@ -165,6 +167,7 @@ class ChatMessage {
   final String? linkTitle;
   final String? linkImageUrl;
   final int? fileSize;
+  final int? voiceDurationSeconds;
   final String? callKind;
   final String? callStatus;
   final int? callDurationSeconds;
@@ -174,6 +177,9 @@ class ChatMessage {
   final DateTime createdAt;
   final PostAuthor sender;
 
+  bool get isVoiceMessage =>
+      type == MessageType.file && voiceDurationSeconds != null;
+
   ChatMessage copyWith({
     MessageType? type,
     String? text,
@@ -181,6 +187,7 @@ class ChatMessage {
     String? linkTitle,
     String? linkImageUrl,
     int? fileSize,
+    int? voiceDurationSeconds,
     String? callKind,
     String? callStatus,
     int? callDurationSeconds,
@@ -197,6 +204,7 @@ class ChatMessage {
       linkTitle: linkTitle ?? this.linkTitle,
       linkImageUrl: linkImageUrl ?? this.linkImageUrl,
       fileSize: fileSize ?? this.fileSize,
+      voiceDurationSeconds: voiceDurationSeconds ?? this.voiceDurationSeconds,
       callKind: callKind ?? this.callKind,
       callStatus: callStatus ?? this.callStatus,
       callDurationSeconds: callDurationSeconds ?? this.callDurationSeconds,

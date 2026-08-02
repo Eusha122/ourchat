@@ -10,6 +10,13 @@ export const sendMessageSchema = z
     text: z.string().min(1).max(4000).optional(),
     linkUrl: z.string().url().optional(),
     replyToId: z.string().uuid().optional(),
+    isVoice: z
+      .union([
+        z.boolean(),
+        z.enum(["true", "false"]).transform((value) => value === "true"),
+      ])
+      .optional(),
+    voiceDurationSeconds: z.coerce.number().int().min(1).max(300).optional(),
   })
   .refine(
     (data) => {

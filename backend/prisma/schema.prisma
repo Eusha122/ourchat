@@ -152,6 +152,9 @@ model Message {
   linkTitle           String?
   linkImageUrl        String?
   fileSize            Int?
+  /// FILE messages with a duration are voice messages. Keeping this separate
+  /// from call history lets clients render/play them without filename hacks.
+  voiceDurationSeconds Int?
   callKind            CallKind?
   callStatus          CallStatus?
   callDurationSeconds Int?

@@ -77,7 +77,8 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
         ? message.text!
         : switch (message.type) {
             MessageType.image => 'Sent a photo',
-            MessageType.file => 'Sent a file',
+            MessageType.file =>
+              message.isVoiceMessage ? 'Sent a voice message' : 'Sent a file',
             MessageType.call =>
               message.callKind == 'VIDEO'
                   ? 'Incoming video call'
