@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  countUnreadMessages,
-  unreadMessageWhere,
-  type UnreadCandidate,
-} from "./unread";
+import { countUnreadMessages, unreadMessageWhere, type UnreadCandidate, resolveReadTarget, nextReadCursor } from "./unread";
 
 const A = "user-a";
 const B = "user-b";
@@ -139,4 +135,37 @@ test("duplicates/out-of-order realtime delivery cannot change authoritative coun
   const persisted = [first, second];
   assert.equal(unread(persisted, AB, A), 2);
   assert.equal(unread(persisted, AB, A), 2);
+});
+
+const READ_TARGETS = [
+  { id: "m1", createdAt: new Date("2026-08-02T19:00:00Z") },
+  { id: "m2", createdAt: new Date("2026-08-02T20:00:00Z") },
+  { id: "m3", createdAt: new Date("2026-08-02T20:18:56Z") },
+];
+
+test("read target: an explicitly named message is used as-is", () => {
+  assert.equal(resolveReadTarget(READ_TARGETS, "m2")?.id, "m2");
+});
+
+test("read target: an omitted id falls back to the newest visible message", () => {
+  // Regression: older clients POST /read with no body at all. Rejecting them
+  // with a 400 froze that participant's cursor, leaving an unread badge that
+  // could never be cleared.
+  assert.equal(resolveReadTarget(READ_TARGETS, undefined)?.id, "m3");
+});
+
+test("read target: a stale or deleted id falls back instead of failing", () => {
+  assert.equal(resolveReadTarget(READ_TARGETS, "since-deleted")?.id, "m3");
+});
+
+test("read target: an empty conversation resolves to nothing", () => {
+  assert.equal(resolveReadTarget([], "anything"), null);
+});
+
+test("read cursor never moves backwards", () => {
+  const later = new Date("2026-08-02T20:18:56Z");
+  const earlier = new Date("2026-08-02T19:00:00Z");
+  assert.equal(nextReadCursor(later, earlier).toISOString(), later.toISOString());
+  assert.equal(nextReadCursor(earlier, later).toISOString(), later.toISOString());
+  assert.equal(nextReadCursor(null, later).toISOString(), later.toISOString());
 });

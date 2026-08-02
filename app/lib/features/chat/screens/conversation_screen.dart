@@ -95,6 +95,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   void initState() {
     super.initState();
     _load();
+    AppForeground.instance.listenable.addListener(_onForegroundChanged);
     _socketProviderSub = ref.listenManual(socketServiceProvider, (
       previous,
       next,
@@ -111,6 +112,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   @override
   void dispose() {
+    AppForeground.instance.listenable.removeListener(_onForegroundChanged);
     _boundSocket?.leaveConversation(widget.conversationId);
     _messageSub?.cancel();
     _messageUpdateSub?.cancel();
@@ -317,6 +319,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       context,
     ).routeInformationProvider.value.uri.path;
     return currentPath == '/chats/${widget.conversationId}';
+  }
+
+  void _onForegroundChanged() {
+    if (!mounted || !AppForeground.instance.isForeground) return;
+    if (_messages.isEmpty) return;
+    _markReadThrough(_messages.first.id);
   }
 
   void _markReadThrough(String messageId) {

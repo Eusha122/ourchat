@@ -44,3 +44,36 @@ export function countUnreadMessages(
     return input.lastReadAt == null || message.createdAt > input.lastReadAt;
   }).length;
 }
+
+/**
+ * Resolves which message a read receipt should advance the cursor to.
+ *
+ * A client may omit the id (older builds) or name one that has since been
+ * removed. Both used to be rejected outright, which froze that participant's
+ * cursor permanently — and a frozen cursor is an unread badge that can never
+ * be cleared. Falling back to the newest message the user can already see is
+ * safe: it only moves the cursor forward, and only across messages that were
+ * visible to them anyway.
+ */
+export function resolveReadTarget(
+  visibleMessages: readonly { id: string; createdAt: Date }[],
+  requestedId: string | undefined,
+): { id: string; createdAt: Date } | null {
+  if (requestedId) {
+    const exact = visibleMessages.find((m) => m.id === requestedId);
+    if (exact) return exact;
+  }
+  return visibleMessages.reduce<{ id: string; createdAt: Date } | null>(
+    (newest, m) =>
+      newest == null || m.createdAt > newest.createdAt ? m : newest,
+    null,
+  );
+}
+
+/** A cursor must never move backwards, so a late receipt cannot re-hide reads. */
+export function nextReadCursor(
+  current: Date | null | undefined,
+  target: Date,
+): Date {
+  return current && current > target ? current : target;
+}
