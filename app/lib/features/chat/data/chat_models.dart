@@ -305,6 +305,7 @@ class ConversationUpdateEvent {
   const ConversationUpdateEvent({
     required this.conversationId,
     required this.lastMessage,
+    this.unreadCount,
   });
 
   factory ConversationUpdateEvent.fromJson(Map<String, dynamic> json) {
@@ -313,23 +314,47 @@ class ConversationUpdateEvent {
       lastMessage: LastMessage.fromJson(
         json['lastMessage'] as Map<String, dynamic>,
       ),
+      unreadCount: json['unreadCount'] as int?,
     );
   }
 
   final String conversationId;
   final LastMessage lastMessage;
+  final int? unreadCount;
+}
+
+class ConversationUnreadEvent {
+  const ConversationUnreadEvent({
+    required this.conversationId,
+    required this.unreadCount,
+  });
+
+  factory ConversationUnreadEvent.fromJson(Map<String, dynamic> json) =>
+      ConversationUnreadEvent(
+        conversationId: json['conversationId'] as String,
+        unreadCount: json['unreadCount'] as int,
+      );
+
+  final String conversationId;
+  final int unreadCount;
 }
 
 class TypingEvent {
-  const TypingEvent({required this.userId, required this.isTyping});
+  const TypingEvent({
+    required this.conversationId,
+    required this.userId,
+    required this.isTyping,
+  });
 
   factory TypingEvent.fromJson(Map<String, dynamic> json) {
     return TypingEvent(
+      conversationId: json['conversationId'] as String? ?? '',
       userId: json['userId'] as String,
       isTyping: json['isTyping'] as bool,
     );
   }
 
+  final String conversationId;
   final String userId;
   final bool isTyping;
 }

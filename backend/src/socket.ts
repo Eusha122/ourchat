@@ -292,9 +292,32 @@ export function initSocket(httpServer: HttpServer): Server {
     socket.on(
       "typing",
       (payload: { conversationId: string; isTyping: boolean }) => {
-        socket
-          .to(`conversation:${payload.conversationId}`)
-          .emit("typing", { userId, isTyping: payload.isTyping });
+        void (async () => {
+          if (
+            typeof payload?.conversationId !== "string" ||
+            typeof payload?.isTyping !== "boolean"
+          ) {
+            return;
+          }
+          const participants = await prisma.conversationParticipant.findMany({
+            where: { conversationId: payload.conversationId },
+            select: { userId: true },
+          });
+          if (!participants.some((participant) => participant.userId === userId)) {
+            return;
+          }
+          const recipients = participants
+            .filter((participant) => participant.userId !== userId)
+            .map((participant) => `user:${participant.userId}`);
+          socket
+            .to(`conversation:${payload.conversationId}`)
+            .to(recipients)
+            .emit("typing", {
+              conversationId: payload.conversationId,
+              userId,
+              isTyping: payload.isTyping,
+            });
+        })().catch((error) => console.error("typing relay failed", error));
       },
     );
 

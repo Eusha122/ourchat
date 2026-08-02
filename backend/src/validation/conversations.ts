@@ -36,3 +36,18 @@ export const messagesQuerySchema = z.object({
   cursor: z.string().uuid().optional(),
   take: z.coerce.number().int().min(1).max(100).optional(),
 });
+
+export const searchMessagesQuerySchema = messagesQuerySchema.extend({
+  q: z.string().trim().min(1).max(200),
+});
+
+export const sharedMessagesQuerySchema = messagesQuerySchema.extend({
+  kind: z.enum(["photos", "links"]),
+});
+
+export const readConversationSchema = z.object({
+  // Optional so a client that omits it (or sends a stale/unknown id) still
+  // advances its read cursor instead of being permanently stuck on a 400.
+  // The route falls back to the newest message the caller can see.
+  throughMessageId: z.string().uuid().optional(),
+});

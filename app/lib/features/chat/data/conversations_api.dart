@@ -72,6 +72,40 @@ class ConversationsApi {
     });
   }
 
+  Future<MessagesPage> searchMessages(
+    String conversationId,
+    String query, {
+    String? cursor,
+    int take = 30,
+  }) async {
+    return _handle(() async {
+      final response = await _dio.get(
+        '/conversations/$conversationId/messages/search',
+        queryParameters: {'q': query, 'cursor': ?cursor, 'take': take},
+      );
+      return MessagesPage.fromJson(response.data as Map<String, dynamic>);
+    });
+  }
+
+  Future<MessagesPage> fetchSharedMessages(
+    String conversationId, {
+    required bool photos,
+    String? cursor,
+    int take = 30,
+  }) async {
+    return _handle(() async {
+      final response = await _dio.get(
+        '/conversations/$conversationId/shared',
+        queryParameters: {
+          'kind': photos ? 'photos' : 'links',
+          'cursor': ?cursor,
+          'take': take,
+        },
+      );
+      return MessagesPage.fromJson(response.data as Map<String, dynamic>);
+    });
+  }
+
   Future<ChatMessage> sendMessage(
     String conversationId,
     String text, {
@@ -80,11 +114,7 @@ class ConversationsApi {
     return _handle(() async {
       final response = await _dio.post(
         '/conversations/$conversationId/messages',
-        data: {
-          'type': 'TEXT',
-          'text': text,
-          if (replyToId != null) 'replyToId': replyToId,
-        },
+        data: {'type': 'TEXT', 'text': text, 'replyToId': ?replyToId},
       );
       final data = response.data as Map<String, dynamic>;
       return ChatMessage.fromJson(data['message'] as Map<String, dynamic>);
@@ -133,7 +163,7 @@ class ConversationsApi {
     return _handle(() async {
       final form = FormData.fromMap({
         'type': isImage ? 'IMAGE' : 'FILE',
-        if (replyToId != null) 'replyToId': replyToId,
+        'replyToId': ?replyToId,
         if (isVoice) 'isVoice': 'true',
         if (voiceDurationSeconds != null)
           'voiceDurationSeconds': voiceDurationSeconds.toString(),
@@ -148,9 +178,15 @@ class ConversationsApi {
     });
   }
 
-  Future<void> markRead(String conversationId) async {
+  Future<void> markRead(
+    String conversationId, {
+    required String throughMessageId,
+  }) async {
     return _handle(() async {
-      await _dio.post('/conversations/$conversationId/read');
+      await _dio.post(
+        '/conversations/$conversationId/read',
+        data: {'throughMessageId': throughMessageId},
+      );
     });
   }
 

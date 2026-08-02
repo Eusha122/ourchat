@@ -25,6 +25,8 @@ class SocketService {
   final _messageController = StreamController<ChatMessage>.broadcast();
   final _conversationUpdateController =
       StreamController<ConversationUpdateEvent>.broadcast();
+  final _conversationUnreadController =
+      StreamController<ConversationUnreadEvent>.broadcast();
   final _typingController = StreamController<TypingEvent>.broadcast();
   final _presenceController = StreamController<PresenceEvent>.broadcast();
   final _conversationReadController =
@@ -55,6 +57,23 @@ class SocketService {
     _mutedCallConversations = calls;
   }
 
+  void setConversationMuted(
+    String conversationId, {
+    bool? messages,
+    bool? calls,
+  }) {
+    if (messages != null) {
+      final next = {..._mutedMessageConversations};
+      messages ? next.add(conversationId) : next.remove(conversationId);
+      _mutedMessageConversations = next;
+    }
+    if (calls != null) {
+      final next = {..._mutedCallConversations};
+      calls ? next.add(conversationId) : next.remove(conversationId);
+      _mutedCallConversations = next;
+    }
+  }
+
   bool isMessageMuted(String conversationId) =>
       _mutedMessageConversations.contains(conversationId);
   bool isCallMuted(String conversationId) =>
@@ -64,6 +83,8 @@ class SocketService {
   Stream<ChatMessage> get onMessage => _messageController.stream;
   Stream<ConversationUpdateEvent> get onConversationUpdate =>
       _conversationUpdateController.stream;
+  Stream<ConversationUnreadEvent> get onConversationUnread =>
+      _conversationUnreadController.stream;
   Stream<TypingEvent> get onTyping => _typingController.stream;
   Stream<PresenceEvent> get onPresence => _presenceController.stream;
   Stream<ConversationReadEvent> get onConversationRead =>
@@ -115,6 +136,13 @@ class SocketService {
     _socket!.on('conversation:updated', (data) {
       _conversationUpdateController.add(
         ConversationUpdateEvent.fromJson(
+          Map<String, dynamic>.from(data as Map),
+        ),
+      );
+    });
+    _socket!.on('conversation:unread', (data) {
+      _conversationUnreadController.add(
+        ConversationUnreadEvent.fromJson(
           Map<String, dynamic>.from(data as Map),
         ),
       );
@@ -351,6 +379,7 @@ class SocketService {
     _socket?.dispose();
     _messageController.close();
     _conversationUpdateController.close();
+    _conversationUnreadController.close();
     _typingController.close();
     _presenceController.close();
     _conversationReadController.close();

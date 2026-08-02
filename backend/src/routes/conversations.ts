@@ -11,10 +11,14 @@ import {
 } from "../lib/serializers";
 import { uploadFile } from "../lib/storage";
 import { iceServersForUser } from "../lib/turn";
+import { unreadMessageWhere } from "../lib/unread";
 import { getIO } from "../socket";
 import {
   messagesQuerySchema,
+  readConversationSchema,
+  searchMessagesQuerySchema,
   sendMessageSchema,
+  sharedMessagesQuerySchema,
   startConversationSchema,
 } from "../validation/conversations";
 
@@ -159,13 +163,11 @@ conversationsRouter.get("/", requireAuth, async (req, res) => {
 
       const lastMessage = p.conversation.messages[0] ?? null;
       const unreadCount = await prisma.message.count({
-        where: {
+        where: unreadMessageWhere({
           conversationId: p.conversationId,
-          senderId: { not: req.userId },
-          unsentAt: null,
-          hiddenBy: { none: { userId: req.userId } },
-          ...(p.lastReadAt ? { createdAt: { gt: p.lastReadAt } } : {}),
-        },
+          userId: req.userId!,
+          lastReadAt: p.lastReadAt,
+        }),
       });
 
       return {
@@ -242,15 +244,11 @@ conversationsRouter.get("/:conversationId", requireAuth, async (req, res) => {
 
   const lastMessage = participant.conversation.messages[0] ?? null;
   const unreadCount = await prisma.message.count({
-    where: {
+    where: unreadMessageWhere({
       conversationId,
-      senderId: { not: req.userId },
-      unsentAt: null,
-      hiddenBy: { none: { userId: req.userId } },
-      ...(participant.lastReadAt
-        ? { createdAt: { gt: participant.lastReadAt } }
-        : {}),
-    },
+      userId: req.userId!,
+      lastReadAt: participant.lastReadAt,
+    }),
   });
 
   res.json({
@@ -307,6 +305,95 @@ conversationsRouter.get("/:conversationId/messages", requireAuth, async (req, re
 
   res.json({ messages: messages.map(toPublicMessage), nextCursor });
 });
+
+conversationsRouter.get(
+  "/:conversationId/messages/search",
+  requireAuth,
+  async (req, res) => {
+    const conversationId = req.params.conversationId as string;
+    const participant = await requireParticipant(conversationId, req.userId!);
+    if (!participant) {
+      res.status(403).json({ error: "Not a participant in this conversation" });
+      return;
+    }
+
+    const parsed = searchMessagesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const take = parsed.data.take ?? 30;
+    const { cursor, q } = parsed.data;
+    const messages = await prisma.message.findMany({
+      where: {
+        conversationId,
+        unsentAt: null,
+        hiddenBy: { none: { userId: req.userId } },
+        OR: [
+          { text: { contains: q, mode: "insensitive" } },
+          { linkTitle: { contains: q, mode: "insensitive" } },
+          { linkUrl: { contains: q, mode: "insensitive" } },
+        ],
+      },
+      take: take + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      include: messageInclude,
+    });
+
+    const hasMore = messages.length > take;
+    if (hasMore) messages.pop();
+    const nextCursor = hasMore ? messages[messages.length - 1]!.id : null;
+    res.json({ messages: messages.map(toPublicMessage), nextCursor });
+  },
+);
+
+conversationsRouter.get(
+  "/:conversationId/shared",
+  requireAuth,
+  async (req, res) => {
+    const conversationId = req.params.conversationId as string;
+    const participant = await requireParticipant(conversationId, req.userId!);
+    if (!participant) {
+      res.status(403).json({ error: "Not a participant in this conversation" });
+      return;
+    }
+
+    const parsed = sharedMessagesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const take = parsed.data.take ?? 30;
+    const { cursor, kind } = parsed.data;
+    const messages = await prisma.message.findMany({
+      where: {
+        conversationId,
+        ...(kind === "photos"
+          ? { type: "IMAGE" as const }
+          : {
+              OR: [
+                { type: "LINK" as const },
+                { text: { contains: "http", mode: "insensitive" as const } },
+              ],
+            }),
+        unsentAt: null,
+        hiddenBy: { none: { userId: req.userId } },
+      },
+      take: take + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      include: messageInclude,
+    });
+
+    const hasMore = messages.length > take;
+    if (hasMore) messages.pop();
+    const nextCursor = hasMore ? messages[messages.length - 1]!.id : null;
+    res.json({ messages: messages.map(toPublicMessage), nextCursor });
+  },
+);
 
 async function handleSendMessage(req: Request, res: Response) {
   const conversationId = req.params.conversationId as string;
@@ -407,7 +494,7 @@ async function handleSendMessage(req: Request, res: Response) {
 
   const participants = await prisma.conversationParticipant.findMany({
     where: { conversationId },
-    select: { userId: true, mutedMessages: true },
+    select: { userId: true, mutedMessages: true, lastReadAt: true },
   });
 
   const io = getIO();
@@ -423,9 +510,17 @@ async function handleSendMessage(req: Request, res: Response) {
   // Every participant — including the sender — needs this to keep their own
   // chat list in sync; ChatsScreen only refreshes an entry (or a brand new
   // conversation) in response to this event, not `message:new`.
-  for (const { userId } of participants) {
+  for (const { userId, lastReadAt } of participants) {
+    const unreadCount = await prisma.message.count({
+      where: unreadMessageWhere({
+        conversationId,
+        userId,
+        lastReadAt,
+      }),
+    });
     io.to(`user:${userId}`).emit("conversation:updated", {
       conversationId,
+      unreadCount,
       lastMessage: {
         id: message.id,
         text: messagePreviewText(message),
@@ -611,7 +706,53 @@ conversationsRouter.post("/:conversationId/read", requireAuth, async (req, res) 
     return;
   }
 
-  const readAt = new Date();
+  const parsed = readConversationSchema.safeParse(req.body ?? {});
+  const requestedId = parsed.success ? parsed.data.throughMessageId : undefined;
+
+  // A receipt is tied to a message that was actually rendered by the client,
+  // never to the wall-clock time when this HTTP request happened to arrive.
+  // This prevents a delayed request from marking newer, unseen messages read
+  // after the user has already left the conversation.
+  let throughMessage = requestedId
+    ? await prisma.message.findFirst({
+        where: {
+          id: requestedId,
+          conversationId,
+          hiddenBy: { none: { userId: req.userId } },
+        },
+        select: { createdAt: true },
+      })
+    : null;
+
+  // Older clients omit the id entirely, and an id can also go stale if the
+  // message was removed between render and this request. Rejecting those with
+  // a 400 left the caller's cursor frozen forever — and a frozen cursor means
+  // an unread badge that can never be cleared. Falling back to the newest
+  // message this user can actually see is both safe (it can only move the
+  // cursor forward, and only over messages they could already read) and
+  // self-healing.
+  if (!throughMessage) {
+    throughMessage = await prisma.message.findFirst({
+      where: { conversationId, hiddenBy: { none: { userId: req.userId } } },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: { createdAt: true },
+    });
+  }
+
+  // Nothing readable in the conversation at all: already fully read.
+  if (!throughMessage) {
+    res.json({
+      ok: true,
+      readAt: participant.lastReadAt?.toISOString() ?? null,
+      unreadCount: 0,
+    });
+    return;
+  }
+
+  const readAt =
+    participant.lastReadAt && participant.lastReadAt > throughMessage.createdAt
+      ? participant.lastReadAt
+      : throughMessage.createdAt;
   await prisma.conversationParticipant.update({
     where: { conversationId_userId: { conversationId, userId: req.userId! } },
     data: { lastReadAt: readAt },
@@ -624,6 +765,17 @@ conversationsRouter.post("/:conversationId/read", requireAuth, async (req, res) 
     select: { userId: true },
   });
   const io = getIO();
+  const unreadCount = await prisma.message.count({
+    where: unreadMessageWhere({
+      conversationId,
+      userId: req.userId!,
+      lastReadAt: readAt,
+    }),
+  });
+  io.to(`user:${req.userId}`).emit("conversation:unread", {
+    conversationId,
+    unreadCount,
+  });
   for (const { userId } of participants) {
     io.to(`user:${userId}`).emit("conversation:read", {
       conversationId,
@@ -632,7 +784,7 @@ conversationsRouter.post("/:conversationId/read", requireAuth, async (req, res) 
     });
   }
 
-  res.json({ ok: true });
+  res.json({ ok: true, readAt: readAt.toISOString(), unreadCount });
 });
 
 conversationsRouter.post("/:conversationId/pin", requireAuth, async (req, res) => {

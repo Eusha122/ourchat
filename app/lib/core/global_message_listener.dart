@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../features/auth/state/auth_controller.dart';
 import '../features/chat/data/chat_models.dart';
 import '../features/chat/state/chat_providers.dart';
+import 'app_foreground.dart';
 import 'notification_service.dart';
 
 /// Lives for the whole app session (mounted via [MaterialApp.builder], so it
@@ -39,16 +40,6 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
       _sub?.cancel();
       _sub = next?.onMessage.listen(_onMessage);
     }, fireImmediately: true);
-    // The banner has its own multi-second auto-dismiss timer, so tapping its
-    // own "Open" action (or otherwise navigating into any conversation while
-    // it's still showing) would otherwise leave it floating over the chat
-    // it just opened until that timer runs out on its own.
-    ref.listenManual(activeConversationIdProvider, (previous, next) {
-      if (next != null) {
-        widget.scaffoldMessengerKey.currentState?.hideCurrentSnackBar();
-        NotificationService().dismissMessageNotification(next);
-      }
-    });
   }
 
   void _onMessage(ChatMessage message) {
@@ -63,7 +54,11 @@ class _GlobalMessageListenerState extends ConsumerState<GlobalMessageListener> {
 
     // The message is already on-screen and immediately marked read by
     // ConversationScreen. Suppress every alert surface for this exact thread.
-    if (ref.read(activeConversationIdProvider) == message.conversationId) {
+    final currentPath = GoRouter.of(
+      context,
+    ).routeInformationProvider.value.uri.path;
+    if (currentPath == '/chats/${message.conversationId}' &&
+        AppForeground.instance.isForeground) {
       return;
     }
 

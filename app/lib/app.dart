@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'core/app_foreground.dart';
 import 'core/global_message_listener.dart';
 import 'core/global_call_listener.dart';
 import 'core/app_update_prompt.dart';
@@ -103,11 +104,13 @@ class _OurChatAppState extends ConsumerState<OurChatApp>
       themeMode: ThemeMode.light,
       routerConfig: router,
       scaffoldMessengerKey: _scaffoldMessengerKey,
-      builder: (context, child) => AppUpdatePrompt(
-        child: GlobalCallListener(
-          child: GlobalMessageListener(
-            scaffoldMessengerKey: _scaffoldMessengerKey,
-            child: child ?? const SizedBox.shrink(),
+      builder: (context, child) => AppForegroundObserver(
+        child: AppUpdatePrompt(
+          child: GlobalCallListener(
+            child: GlobalMessageListener(
+              scaffoldMessengerKey: _scaffoldMessengerKey,
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
         ),
       ),

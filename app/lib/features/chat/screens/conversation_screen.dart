@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gal/gal.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -19,12 +20,15 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../calls/call_models.dart';
 import '../../calls/call_session_screen.dart';
+import '../../../core/app_foreground.dart';
+import '../../../core/notification_service.dart';
 import '../../../core/socket_service.dart';
 import '../../posts/data/post_models.dart';
 import '../data/chat_models.dart';
 import '../data/conversations_api.dart';
 import '../state/chat_providers.dart';
 import '../widgets/link_message_card.dart';
+import 'conversation_details_screen.dart';
 
 const _ink = Color(0xFF1B1B1B);
 const _muted = Color(0xFF8A8A8A);
@@ -99,22 +103,15 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     }, fireImmediately: true);
     // Covers deletion by either side while this screen is open — there's
     // nothing left to show, so leave rather than let further taps 404.
-    _markRead();
-    // Marks this conversation as "open" so the global listener doesn't pop
-    // a banner/sound for messages we're already looking at.
-    Future.microtask(
-      () => ref
-          .read(activeConversationIdProvider.notifier)
-          .set(widget.conversationId),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_isCurrentConversation) return;
+      NotificationService().dismissMessageNotification(widget.conversationId);
+    });
   }
 
   @override
   void dispose() {
     _boundSocket?.leaveConversation(widget.conversationId);
-    if (ref.read(activeConversationIdProvider) == widget.conversationId) {
-      ref.read(activeConversationIdProvider.notifier).set(null);
-    }
     _messageSub?.cancel();
     _messageUpdateSub?.cancel();
     _messageRemovedSub?.cancel();
@@ -162,7 +159,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         .where((event) => event.conversationId == widget.conversationId)
         .listen((event) => _removeMessage(event.messageId));
     _typingSub = socket.onTyping
-        .where((event) => event.userId == widget.otherParticipant.id)
+        .where(
+          (event) =>
+              event.conversationId == widget.conversationId &&
+              event.userId == widget.otherParticipant.id,
+        )
         .listen(_onTyping);
     _presenceSub = socket.onPresence
         .where((event) => event.userId == widget.otherParticipant.id)
@@ -188,7 +189,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       return; // avoid duplicating our own send
     }
     setState(() => _messages.insert(0, message));
-    _markRead();
+    _markReadThrough(message.id);
   }
 
   void _replaceMessage(ChatMessage message) {
@@ -310,10 +311,20 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   /// Clearing the unread badge must not depend on the socket round-trip, so
   /// this is fired on open and on every message that lands while open.
-  void _markRead() {
+  bool get _isCurrentConversation {
+    if (!AppForeground.instance.isForeground) return false;
+    final currentPath = GoRouter.of(
+      context,
+    ).routeInformationProvider.value.uri.path;
+    return currentPath == '/chats/${widget.conversationId}';
+  }
+
+  void _markReadThrough(String messageId) {
+    if (!_isCurrentConversation) return;
+    NotificationService().dismissMessageNotification(widget.conversationId);
     ref
         .read(conversationsApiProvider)
-        .markRead(widget.conversationId)
+        .markRead(widget.conversationId, throughMessageId: messageId)
         .catchError((_) {
           // Best effort; the next open retries.
         });
@@ -345,6 +356,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           ..clear()
           ..addAll(page.messages);
       });
+      if (page.messages.isNotEmpty) {
+        _markReadThrough(page.messages.first.id);
+      }
       // Their read state may have advanced while this screen was closed, so
       // the receipt has to be seeded from the server rather than relying
       // solely on the live socket event.
@@ -592,6 +606,14 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 isTyping: _otherIsTyping,
                 isOnline: _otherIsOnline,
                 lastActiveAt: _otherLastActiveAt,
+                onOpenDetails: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ConversationDetailsScreen(
+                      conversationId: widget.conversationId,
+                      otherParticipant: widget.otherParticipant,
+                    ),
+                  ),
+                ),
                 onVideoCall: () => _startCall(CallKind.video),
                 onAudioCall: () => _startCall(CallKind.audio),
               ),
@@ -983,6 +1005,7 @@ class _ConversationHeader extends StatelessWidget {
     required this.isTyping,
     required this.isOnline,
     required this.lastActiveAt,
+    required this.onOpenDetails,
     required this.onVideoCall,
     required this.onAudioCall,
   });
@@ -992,6 +1015,7 @@ class _ConversationHeader extends StatelessWidget {
   final bool isTyping;
   final bool isOnline;
   final DateTime? lastActiveAt;
+  final VoidCallback onOpenDetails;
   final VoidCallback onVideoCall;
   final VoidCallback onAudioCall;
 
@@ -1036,96 +1060,108 @@ class _ConversationHeader extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 4),
-                  Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(
-                            0xFF2B2468,
-                          ).withValues(alpha: 0.16),
-                          blurRadius: 16,
-                          offset: const Offset(0, 6),
-                        ),
-                        BoxShadow(
-                          color: const Color(
-                            0xFF2B2468,
-                          ).withValues(alpha: 0.06),
-                          blurRadius: 5,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: ClipOval(
-                      child: avatarUrl == null
-                          ? placeholder
-                          : CachedNetworkImage(
-                              imageUrl: avatarUrl!,
-                              fit: BoxFit.cover,
-                              errorWidget: (_, _, _) => placeholder,
-                            ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
                   Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            color: _ink,
-                            fontSize: 14.5,
-                            height: 1.25,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: -0.25,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onOpenDetails,
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(
+                                    0xFF2B2468,
+                                  ).withValues(alpha: 0.16),
+                                  blurRadius: 16,
+                                  offset: const Offset(0, 6),
+                                ),
+                                BoxShadow(
+                                  color: const Color(
+                                    0xFF2B2468,
+                                  ).withValues(alpha: 0.06),
+                                  blurRadius: 5,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: ClipOval(
+                              child: avatarUrl == null
+                                  ? placeholder
+                                  : CachedNetworkImage(
+                                      imageUrl: avatarUrl!,
+                                      fit: BoxFit.cover,
+                                      errorWidget: (_, _, _) => placeholder,
+                                    ),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 2),
-                        AnimatedSwitcher(
-                          duration: _motion,
-                          switchInCurve: _ease,
-                          switchOutCurve: _ease,
-                          child: Row(
-                            key: ValueKey('$isTyping-$isOnline-$lastActiveAt'),
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (!isTyping && isOnline) ...[
-                                Container(
-                                  width: 6,
-                                  height: 6,
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFF3DD68C),
-                                    shape: BoxShape.circle,
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontFamily: 'Poppins',
+                                    color: _ink,
+                                    fontSize: 14.5,
+                                    height: 1.25,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: -0.25,
                                   ),
                                 ),
-                                const SizedBox(width: 5),
-                              ],
-                              Text(
-                                isTyping
-                                    ? 'typing…'
-                                    : isOnline
-                                    ? 'Online'
-                                    : _lastSeenLabel(lastActiveAt),
-                                style: const TextStyle(
-                                  fontFamily: 'Poppins',
-                                  color: _muted,
-                                  fontSize: 10,
-                                  height: 1.2,
-                                  fontWeight: FontWeight.w400,
-                                  letterSpacing: 0.1,
+                                const SizedBox(height: 2),
+                                AnimatedSwitcher(
+                                  duration: _motion,
+                                  switchInCurve: _ease,
+                                  switchOutCurve: _ease,
+                                  child: Row(
+                                    key: ValueKey(
+                                      '$isTyping-$isOnline-$lastActiveAt',
+                                    ),
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (!isTyping && isOnline) ...[
+                                        Container(
+                                          width: 6,
+                                          height: 6,
+                                          decoration: const BoxDecoration(
+                                            color: Color(0xFF3DD68C),
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 5),
+                                      ],
+                                      Text(
+                                        isTyping
+                                            ? 'typing…'
+                                            : isOnline
+                                            ? 'Online'
+                                            : _lastSeenLabel(lastActiveAt),
+                                        style: const TextStyle(
+                                          fontFamily: 'Poppins',
+                                          color: _muted,
+                                          fontSize: 10,
+                                          height: 1.2,
+                                          fontWeight: FontWeight.w400,
+                                          letterSpacing: 0.1,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                   _OutlineCircleButton(
@@ -2323,7 +2359,7 @@ class _VoiceMessageBubbleState extends State<_VoiceMessageBubble> {
 
   String _timeLabel(Duration value) {
     final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return value.inMinutes.toString() + ':' + seconds;
+    return '${value.inMinutes}:$seconds';
   }
 
   @override
@@ -2543,7 +2579,7 @@ class _RecordingComposerRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-    final label = duration.inMinutes.toString() + ':' + seconds;
+    final label = '${duration.inMinutes}:$seconds';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
       child: Row(

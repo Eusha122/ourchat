@@ -1,8 +1,13 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/app_foreground.dart';
+import '../../core/socket_service.dart';
 import '../auth/state/auth_controller.dart';
 import '../chat/data/chat_models.dart';
 import '../chat/data/conversations_api.dart';
@@ -24,22 +29,100 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
   List<Conversation> _conversations = [];
   bool _isLoading = true;
   String? _error;
+  ProviderSubscription<SocketService?>? _socketProviderSubscription;
+  StreamSubscription<ConversationUpdateEvent>? _updateSubscription;
+  StreamSubscription<ConversationUnreadEvent>? _unreadSubscription;
+  StreamSubscription<TypingEvent>? _typingSubscription;
+  StreamSubscription<String>? _deletedSubscription;
+  Timer? _relativeTimeTimer;
+  final _typingConversations = <String>{};
+  final _typingTimers = <String, Timer>{};
 
   @override
   void initState() {
     super.initState();
-    _load();
-    ref.listenManual(socketServiceProvider, (previous, next) {
-      next?.onConversationUpdate.listen(_onConversationUpdated);
+    _load(showLoader: true);
+    _socketProviderSubscription = ref.listenManual(socketServiceProvider, (
+      previous,
+      next,
+    ) {
+      _updateSubscription?.cancel();
+      _unreadSubscription?.cancel();
+      _typingSubscription?.cancel();
+      _deletedSubscription?.cancel();
+      _updateSubscription = next?.onConversationUpdate.listen(
+        _onConversationUpdated,
+      );
+      _unreadSubscription = next?.onConversationUnread.listen(
+        _onConversationUnread,
+      );
+      _typingSubscription = next?.onTyping.listen(_onTyping);
       // Covers both directions: the server echoes this back to whoever just
       // deleted it (so this list updates without a manual local removal)
       // and pushes it live to the other participant.
-      next?.onConversationDeleted.listen(_onConversationDeleted);
+      _deletedSubscription = next?.onConversationDeleted.listen(
+        _onConversationDeleted,
+      );
     }, fireImmediately: true);
+    _relativeTimeTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted && _conversations.isNotEmpty) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _relativeTimeTimer?.cancel();
+    _updateSubscription?.cancel();
+    _unreadSubscription?.cancel();
+    _typingSubscription?.cancel();
+    _deletedSubscription?.cancel();
+    for (final timer in _typingTimers.values) {
+      timer.cancel();
+    }
+    _socketProviderSubscription?.close();
+    super.dispose();
+  }
+
+  void _onConversationUnread(ConversationUnreadEvent event) {
+    if (!mounted) return;
+    final index = _conversations.indexWhere(
+      (c) => c.id == event.conversationId,
+    );
+    if (index == -1) return;
+    setState(() {
+      _conversations[index] = _conversations[index].copyWith(
+        unreadCount: event.unreadCount,
+      );
+    });
+  }
+
+  void _onTyping(TypingEvent event) {
+    if (!mounted || event.conversationId.isEmpty) return;
+    if (!_conversations.any((item) => item.id == event.conversationId)) return;
+    _typingTimers.remove(event.conversationId)?.cancel();
+    setState(() {
+      if (event.isTyping) {
+        _typingConversations.add(event.conversationId);
+      } else {
+        _typingConversations.remove(event.conversationId);
+      }
+    });
+    if (event.isTyping) {
+      _typingTimers[event.conversationId] = Timer(
+        const Duration(seconds: 4),
+        () {
+          if (!mounted) return;
+          setState(() => _typingConversations.remove(event.conversationId));
+          _typingTimers.remove(event.conversationId);
+        },
+      );
+    }
   }
 
   void _onConversationDeleted(String conversationId) {
     if (!mounted) return;
+    _typingTimers.remove(conversationId)?.cancel();
+    _typingConversations.remove(conversationId);
     setState(() {
       _conversations.removeWhere(
         (conversation) => conversation.id == conversationId,
@@ -57,9 +140,16 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
     // server-side immediately, so bumping the badge here would leave a stale
     // count until the next full refetch.
     final isOwnMessage = event.lastMessage.senderId == myId;
+    final currentPath = GoRouter.of(
+      context,
+    ).routeInformationProvider.value.uri.path;
     final isOpenConversation =
-        ref.read(activeConversationIdProvider) == event.conversationId;
-    final countsAsUnread = !isOwnMessage && !isOpenConversation;
+        currentPath == '/chats/${event.conversationId}' &&
+        AppForeground.instance.isForeground;
+    if (!isOwnMessage) {
+      _typingTimers.remove(event.conversationId)?.cancel();
+      _typingConversations.remove(event.conversationId);
+    }
 
     final index = _conversations.indexWhere(
       (conversation) => conversation.id == event.conversationId,
@@ -75,21 +165,34 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
     setState(() {
       final updated = _conversations[index].copyWith(
         lastMessage: event.lastMessage,
-        unreadCount: countsAsUnread
-            ? _conversations[index].unreadCount + 1
-            : _conversations[index].unreadCount,
+        unreadCount: isOpenConversation
+            ? 0
+            : event.unreadCount ?? _conversations[index].unreadCount,
       );
-      _conversations
-        ..removeAt(index)
-        ..insert(0, updated);
+      _conversations[index] = updated;
+      _sortConversations();
+    });
+    // Never guess with `unreadCount++`. Older/malformed events that omit the
+    // authoritative total trigger a quiet server refresh instead.
+    if (event.unreadCount == null) unawaited(_load());
+  }
+
+  void _sortConversations() {
+    _conversations.sort((a, b) {
+      if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+      final aTime = a.lastMessage?.createdAt.millisecondsSinceEpoch ?? 0;
+      final bTime = b.lastMessage?.createdAt.millisecondsSinceEpoch ?? 0;
+      return bTime.compareTo(aTime);
     });
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+  Future<void> _load({bool showLoader = false}) async {
+    if (showLoader || _conversations.isEmpty) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
     try {
       final conversations = await ref
           .read(conversationsApiProvider)
@@ -99,7 +202,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
       _syncMutedConversations();
     } on ConversationsApiException catch (error) {
       if (!mounted) return;
-      setState(() => _error = error.message);
+      if (_conversations.isEmpty) setState(() => _error = error.message);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -108,13 +211,18 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
   /// Pushes the current mute state into SocketService, which is what
   /// actually gates the live sound/banner/ringtone for muted chats.
   void _syncMutedConversations() {
-    ref.read(socketServiceProvider)?.setMutedConversations(
-      messages: _conversations
-          .where((c) => c.mutedMessages)
-          .map((c) => c.id)
-          .toSet(),
-      calls: _conversations.where((c) => c.mutedCalls).map((c) => c.id).toSet(),
-    );
+    ref
+        .read(socketServiceProvider)
+        ?.setMutedConversations(
+          messages: _conversations
+              .where((c) => c.mutedMessages)
+              .map((c) => c.id)
+              .toSet(),
+          calls: _conversations
+              .where((c) => c.mutedCalls)
+              .map((c) => c.id)
+              .toSet(),
+        );
   }
 
   @override
@@ -144,18 +252,32 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
       return const _EmptyState(key: ValueKey('empty'));
     }
 
-    final entries = _conversations.map(_ChatEntry.fromConversation).toList();
+    final myId = ref.read(authControllerProvider).value?.user?.id;
+    final entries = _conversations
+        .map(
+          (conversation) => _ChatEntry.fromConversation(
+            conversation,
+            myId,
+            isTyping: _typingConversations.contains(conversation.id),
+          ),
+        )
+        .toList();
 
     return _ChatList(
       key: const ValueKey('chats'),
       entries: entries,
       onTap: (index) async {
         final conversation = _conversations[index];
+        if (conversation.unreadCount > 0) {
+          setState(() {
+            _conversations[index] = conversation.copyWith(unreadCount: 0);
+          });
+        }
         await context.push(
           '/chats/${conversation.id}',
           extra: conversation.otherParticipant,
         );
-        _load();
+        unawaited(_load());
       },
       onLongPress: (index) {
         HapticFeedback.mediumImpact();
@@ -185,8 +307,10 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
             );
             _conversations.sort((a, b) {
               if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
-              final aTime = a.lastMessage?.createdAt.millisecondsSinceEpoch ?? 0;
-              final bTime = b.lastMessage?.createdAt.millisecondsSinceEpoch ?? 0;
+              final aTime =
+                  a.lastMessage?.createdAt.millisecondsSinceEpoch ?? 0;
+              final bTime =
+                  b.lastMessage?.createdAt.millisecondsSinceEpoch ?? 0;
               return bTime - aTime;
             });
           });
@@ -262,7 +386,9 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
       _conversations.removeWhere((c) => c.id == conversation.id);
     });
     try {
-      await ref.read(conversationsApiProvider).deleteConversation(conversation.id);
+      await ref
+          .read(conversationsApiProvider)
+          .deleteConversation(conversation.id);
     } on ConversationsApiException catch (error) {
       if (!mounted) return;
       _showError(error.message);
@@ -426,7 +552,12 @@ class _ErrorState extends StatelessWidget {
 }
 
 class _ChatList extends StatelessWidget {
-  const _ChatList({super.key, required this.entries, this.onTap, this.onLongPress});
+  const _ChatList({
+    super.key,
+    required this.entries,
+    this.onTap,
+    this.onLongPress,
+  });
 
   final List<_ChatEntry> entries;
   final ValueChanged<int>? onTap;
@@ -487,8 +618,30 @@ class _ChatRowState extends State<_ChatRow> {
         duration: _motion,
         curve: Curves.easeInOutCubic,
         alignment: Alignment.center,
-        child: SizedBox(
-          height: 62,
+        child: AnimatedContainer(
+          duration: _motion,
+          curve: Curves.easeInOutCubic,
+          height: 68,
+          margin: const EdgeInsets.symmetric(vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: entry.unread > 0
+                ? const Color(0xFFE9E5FF)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+            border: entry.unread > 0
+                ? Border.all(color: const Color(0xFFD8D1FF))
+                : null,
+            boxShadow: entry.unread > 0
+                ? [
+                    BoxShadow(
+                      color: _purple.withValues(alpha: 0.08),
+                      blurRadius: 18,
+                      offset: const Offset(0, 7),
+                    ),
+                  ]
+                : null,
+          ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -506,12 +659,14 @@ class _ChatRowState extends State<_ChatRow> {
                             entry.name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontFamily: 'Poppins',
                               color: _ink,
                               fontSize: 14,
                               height: 1.2,
-                              fontWeight: FontWeight.w600,
+                              fontWeight: entry.unread > 0
+                                  ? FontWeight.w700
+                                  : FontWeight.w600,
                               letterSpacing: -0.2,
                             ),
                           ),
@@ -535,18 +690,25 @@ class _ChatRowState extends State<_ChatRow> {
                       ],
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      entry.preview,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontFamily: 'Poppins',
-                        color: Color(0xFF9A9AA5),
-                        fontSize: 11.5,
-                        height: 1.2,
-                        fontWeight: FontWeight.w400,
+                    if (entry.isTyping)
+                      _TypingPreview(name: entry.name)
+                    else
+                      Text(
+                        entry.preview,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          color: entry.unread > 0
+                              ? const Color(0xFF302866)
+                              : const Color(0xFF9A9AA5),
+                          fontSize: 11.5,
+                          height: 1.2,
+                          fontWeight: entry.unread > 0
+                              ? FontWeight.w600
+                              : FontWeight.w400,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -560,12 +722,16 @@ class _ChatRowState extends State<_ChatRow> {
                     Text(
                       entry.time,
                       maxLines: 1,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Poppins',
-                        color: Color(0xFFA9A9B4),
+                        color: entry.unread > 0
+                            ? _purple
+                            : const Color(0xFFA9A9B4),
                         fontSize: 10.5,
                         height: 1.2,
-                        fontWeight: FontWeight.w400,
+                        fontWeight: entry.unread > 0
+                            ? FontWeight.w600
+                            : FontWeight.w400,
                       ),
                     ),
                     const SizedBox(height: 7),
@@ -605,6 +771,75 @@ class _ChatRowState extends State<_ChatRow> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _TypingPreview extends StatefulWidget {
+  const _TypingPreview({required this.name});
+
+  final String name;
+
+  @override
+  State<_TypingPreview> createState() => _TypingPreviewState();
+}
+
+class _TypingPreviewState extends State<_TypingPreview>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1050),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(
+            '${widget.name} is typing',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: 'Poppins',
+              color: _purple,
+              fontSize: 11.5,
+              height: 1.2,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const SizedBox(width: 5),
+        AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) => Row(
+            children: List.generate(3, (index) {
+              final wave =
+                  (math.sin(
+                        (_controller.value * math.pi * 2) - (index * 0.85),
+                      ) +
+                      1) /
+                  2;
+              return Container(
+                width: 4,
+                height: 4,
+                margin: EdgeInsets.only(left: index == 0 ? 0 : 3),
+                decoration: BoxDecoration(
+                  color: _purple.withValues(alpha: 0.28 + wave * 0.72),
+                  shape: BoxShape.circle,
+                ),
+              );
+            }),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -806,22 +1041,32 @@ class _ChatEntry {
     this.unread = 0,
     this.pinned = false,
     this.mutedMessages = false,
+    this.isTyping = false,
   });
 
-  factory _ChatEntry.fromConversation(Conversation conversation) {
+  factory _ChatEntry.fromConversation(
+    Conversation conversation,
+    String? currentUserId, {
+    bool isTyping = false,
+  }) {
     final other = conversation.otherParticipant;
-    final date = conversation.lastMessage?.createdAt;
+    final lastMessage = conversation.lastMessage;
+    final date = lastMessage?.createdAt;
+    final rawPreview = lastMessage?.preview ?? 'Say hello';
     return _ChatEntry(
       name: other.displayName?.isNotEmpty == true
           ? other.displayName!
           : other.username,
-      preview: conversation.lastMessage?.preview ?? 'Say hello',
+      preview: lastMessage != null && lastMessage.senderId == currentUserId
+          ? 'You: $rawPreview'
+          : rawPreview,
       time: date == null ? '' : _formatTime(date),
       avatarUrl: other.avatarUrl,
       unread: conversation.unreadCount,
       fallback: const Color(0xFF7467FF),
       pinned: conversation.pinned,
       mutedMessages: conversation.mutedMessages,
+      isTyping: isTyping,
     );
   }
 
@@ -833,13 +1078,30 @@ class _ChatEntry {
   final int unread;
   final bool pinned;
   final bool mutedMessages;
+  final bool isTyping;
 
   static String _formatTime(DateTime date) {
+    final difference = DateTime.now().difference(date.toLocal());
+    if (difference.isNegative || difference.inSeconds < 60) return 'now';
+    if (difference.inMinutes < 60) return '${difference.inMinutes}m ago';
+    if (difference.inHours < 24) return '${difference.inHours}h ago';
+    if (difference.inDays < 7) return '${difference.inDays}d ago';
     final local = date.toLocal();
-    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
-    final minute = local.minute.toString().padLeft(2, '0');
-    final suffix = local.hour < 12 ? 'AM' : 'PM';
-    return '$hour:$minute $suffix';
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${local.day} ${months[local.month - 1]}';
   }
 }
 
@@ -887,8 +1149,7 @@ class _ChatMenuSheet extends StatelessWidget {
                   ? Icons.push_pin_outlined
                   : Icons.push_pin_rounded,
               label: conversation.pinned ? 'Unpin chat' : 'Pin chat',
-              onTap: () =>
-                  Navigator.of(context).pop(_ChatMenuAction.togglePin),
+              onTap: () => Navigator.of(context).pop(_ChatMenuAction.togglePin),
             ),
             _MenuTile(
               icon: conversation.mutedMessages
@@ -897,9 +1158,8 @@ class _ChatMenuSheet extends StatelessWidget {
               label: conversation.mutedMessages
                   ? 'Unmute messages'
                   : 'Mute messages',
-              onTap: () => Navigator.of(
-                context,
-              ).pop(_ChatMenuAction.toggleMuteMessages),
+              onTap: () =>
+                  Navigator.of(context).pop(_ChatMenuAction.toggleMuteMessages),
             ),
             _MenuTile(
               icon: conversation.mutedCalls
